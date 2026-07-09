@@ -1,0 +1,8 @@
+[tools]
+python = "3.11"
+
+[tasks.test]
+run = "python3 -m unittest discover -s tests -v"
+
+[tasks.bench]
+run = "python3 scripts/agent_token_saver.py bench 'debug failing pytest in agent prompt builder'"
