@@ -1,6 +1,6 @@
 # agent-token-saver-skill-router
 
-Universal adaptive skill router for Hermes, Claude Code, Codex CLI, OpenCode, Cursor, Windsurf, and repo-local agents.
+Universal adaptive skill router for Hermes, Claude Code, Codex CLI, GG Coder, OpenCode, Cursor, Windsurf, and repo-local agents.
 
 It solves one expensive failure mode: loading every available `SKILL.md` into the system prompt. Instead, the agent keeps one tiny router skill hot, scans skill indexes/files cheaply, and lazy-loads only the 0-3 skills that materially help the current task.
 
@@ -29,6 +29,7 @@ Or one target:
 ```bash
 ./install.sh hermes
 ./install.sh claude
+./install.sh ggcoder
 ./install.sh codex
 ```
 
@@ -38,6 +39,7 @@ Manual install locations:
 Hermes:      ~/.hermes/skills/metaskills/agent-token-saver-skill-router/SKILL.md
 Claude Code: ~/.claude/skills/agent-token-saver-skill-router/SKILL.md
 Codex CLI:   ~/.codex/skills/agent-token-saver-skill-router/SKILL.md
+GG Coder:    ~/.gg/skills/agent-token-saver-skill-router.md
 Repo-local:  .agents/skills/agent-token-saver-skill-router/SKILL.md
 ```
 

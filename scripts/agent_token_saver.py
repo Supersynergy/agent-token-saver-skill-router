@@ -216,6 +216,7 @@ def install(target: str, dry_run: bool = False) -> list[str]:
         "hermes": home / ".hermes" / "skills" / "metaskills" / SKILL_NAME / "SKILL.md",
         "claude": home / ".claude" / "skills" / SKILL_NAME / "SKILL.md",
         "codex": home / ".codex" / "skills" / SKILL_NAME / "SKILL.md",
+        "ggcoder": home / ".gg" / "skills" / f"{SKILL_NAME}.md",
         "opencode": home / ".opencode" / "skills" / SKILL_NAME / "SKILL.md",
         "repo": Path.cwd() / ".agents" / "skills" / SKILL_NAME / "SKILL.md",
     }
@@ -244,7 +245,7 @@ def main() -> int:
     p_bench.add_argument("intent")
     p_bench.add_argument("--max", type=int, default=3)
     p_install = sub.add_parser("install")
-    p_install.add_argument("--target", default="all", choices=["all", "hermes", "claude", "codex", "opencode", "repo"])
+    p_install.add_argument("--target", default="all", choices=["all", "hermes", "claude", "codex", "ggcoder", "opencode", "repo"])
     p_install.add_argument("--dry-run", action="store_true")
     p_scan = sub.add_parser("scan")
     p_scan.add_argument("--json", action="store_true")

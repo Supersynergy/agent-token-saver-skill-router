@@ -62,6 +62,7 @@ class AgentTokenSaverTests(unittest.TestCase):
             self.assertTrue(any(".hermes" in p for p in written))
             self.assertTrue(any(".claude" in p for p in written))
             self.assertTrue(any(".codex" in p for p in written))
+            self.assertTrue(any(".gg" in p for p in written))
 
 
 if __name__ == "__main__":

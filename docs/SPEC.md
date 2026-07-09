@@ -13,6 +13,7 @@ Given a task intent and local skill roots, the router returns a compact selected
 - Hermes
 - Claude Code
 - Codex CLI
+- GG Coder
 - OpenCode
 - Cursor/Windsurf-compatible skill folders
 - repo-local `.agents/skills`
