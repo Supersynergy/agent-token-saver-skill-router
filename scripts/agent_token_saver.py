@@ -4,6 +4,7 @@
 Python stdlib only. Works as a small CLI helper for Hermes, Claude Code,
 Codex CLI, OpenCode, Cursor, Windsurf, and repo-local agents.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -11,6 +12,7 @@ import json
 import os
 import re
 import shutil
+from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable
@@ -19,13 +21,54 @@ SKILL_NAME = "agent-token-saver-skill-router"
 ROOT = Path(__file__).resolve().parents[1]
 ROOT_SKILL = ROOT / "SKILL.md"
 WORD_RE = re.compile(r"[a-zA-Z0-9_+-]{2,}")
+EXPLICIT_SKILL_RE = re.compile(r"\$([a-zA-Z0-9_:+.-]+)")
 STOPWORDS = {
-    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "how", "in",
-    "into", "is", "it", "make", "of", "on", "or", "that", "the", "this", "to", "use",
-    "using", "with", "without", "your",
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "how",
+    "in",
+    "into",
+    "is",
+    "it",
+    "make",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "this",
+    "to",
+    "use",
+    "using",
+    "with",
+    "without",
+    "your",
 }
-EXCLUDE_DIRS = {".git", "node_modules", "target", ".venv", "venv", "__pycache__", ".archive"}
+EXCLUDE_DIRS = {
+    ".git",
+    "node_modules",
+    "target",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".archive",
+    "_archive",
+    "runs",
+}
+NOISE_NAME_RE = re.compile(
+    r"(\.bak(?:$|[-._])|\.old$|\.disabled$|[-._]backup(?:$|[-._0-9])|[-._]deprecated$)",
+    re.IGNORECASE,
+)
 FLAT_SKILL_SKIP = {"readme.md", "changelog.md", "license.md", "contributing.md"}
+DEFAULT_FAVORITE_BOOST = 6
 
 
 @dataclass(frozen=True)
@@ -46,7 +89,38 @@ class RouteResult:
 
 
 def words(text: str) -> set[str]:
-    return {w.lower() for w in WORD_RE.findall(text or "") if w.lower() not in STOPWORDS}
+    return {
+        w.lower() for w in WORD_RE.findall(text or "") if w.lower() not in STOPWORDS
+    }
+
+
+def favorites_file() -> Path:
+    env = os.getenv("AGENT_SKILL_FAVORITES_FILE", "").strip()
+    if env:
+        return Path(env).expanduser()
+    return Path.home() / ".agents" / "skill-favorites.txt"
+
+
+def load_favorites() -> dict[str, int]:
+    """User-pinned skills that win close calls. One `name` or `name=weight` per line."""
+    favorites: dict[str, int] = {}
+    try:
+        text = favorites_file().read_text(encoding="utf-8")
+    except OSError:
+        return favorites
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        name, sep, weight_raw = line.partition("=")
+        weight = DEFAULT_FAVORITE_BOOST
+        if sep:
+            try:
+                weight = int(weight_raw.strip())
+            except ValueError:
+                weight = DEFAULT_FAVORITE_BOOST
+        favorites[name.strip().lower()] = weight
+    return favorites
 
 
 def estimate_tokens(text: str) -> int:
@@ -66,7 +140,7 @@ def parse_frontmatter(path: Path) -> tuple[str, str]:
     lines = fm.splitlines()
     for i, line in enumerate(lines):
         if line.startswith("name:"):
-            name = line.split(":", 1)[1].strip().strip('"\'')
+            name = line.split(":", 1)[1].strip().strip("\"'")
         elif line.startswith("description:"):
             raw = line.split(":", 1)[1].strip()
             if raw in {">-", ">", "|-", "|"}:
@@ -77,12 +151,14 @@ def parse_frontmatter(path: Path) -> tuple[str, str]:
                     tail.append(nxt.strip())
                 desc = " ".join(x for x in tail if x).strip()
             else:
-                desc = raw.strip('"\'')
+                desc = raw.strip("\"'")
     return name or path.parent.name, desc
 
 
 def looks_like_flat_skill(path: Path) -> bool:
     if path.name.lower() in FLAT_SKILL_SKIP or path.suffix.lower() != ".md":
+        return False
+    if NOISE_NAME_RE.search(path.stem):
         return False
     try:
         start = path.read_text(encoding="utf-8", errors="ignore")[:512]
@@ -98,10 +174,12 @@ def common_roots(cwd: Path | None = None) -> list[Path]:
         cwd / ".agents" / "skills",
         cwd / ".claude" / "skills",
         cwd / ".codex" / "skills",
+        home / ".agents" / "skills",
         home / ".hermes" / "skills",
         home / ".claude" / "skills",
         home / ".claude" / "cts" / "skills",
         home / ".codex" / "skills",
+        home / ".codex" / "plugins" / "cache",
         home / ".gg" / "skills",
         home / ".opencode" / "skills",
         home / ".cursor" / "skills",
@@ -128,7 +206,9 @@ def common_roots(cwd: Path | None = None) -> list[Path]:
 def iter_skill_files(root: Path, max_files: int) -> Iterable[Path]:
     count = 0
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
+        dirnames[:] = [
+            d for d in dirnames if d not in EXCLUDE_DIRS and not NOISE_NAME_RE.search(d)
+        ]
         if "SKILL.md" in filenames:
             yield Path(dirpath) / "SKILL.md"
             count += 1
@@ -144,7 +224,9 @@ def iter_skill_files(root: Path, max_files: int) -> Iterable[Path]:
                         return
 
 
-def scan(roots: list[Path] | None = None, max_files_per_root: int = 1000) -> list[Skill]:
+def scan(
+    roots: list[Path] | None = None, max_files_per_root: int = 1000
+) -> list[Skill]:
     roots = roots or common_roots()
     skills: list[Skill] = []
     seen_names: set[str] = set()
@@ -158,37 +240,108 @@ def scan(roots: list[Path] | None = None, max_files_per_root: int = 1000) -> lis
             if key in seen_names:
                 continue
             seen_names.add(key)
-            skills.append(Skill(name=name, description=desc, path=str(path), root=str(root)))
+            skills.append(
+                Skill(name=name, description=desc, path=str(path), root=str(root))
+            )
     return skills
 
 
-def score(intent: str, skill: Skill) -> int:
+def doc_frequencies(skills: list[Skill]) -> Counter:
+    df: Counter = Counter()
+    for skill in skills:
+        for token in words(skill.name.replace("-", " ")) | words(skill.description):
+            df[token] += 1
+    return df
+
+
+def rarity(token: str, doc_freq: Counter | None) -> float:
+    """Down-weight tokens that match many skills; specific tokens dominate."""
+    if not doc_freq:
+        return 1.0
+    df = doc_freq.get(token, 1)
+    if df <= 2:
+        return 1.0
+    if df <= 8:
+        return 0.5
+    return 0.25
+
+
+def score(
+    intent: str,
+    skill: Skill,
+    doc_freq: Counter | None = None,
+    favorites: dict[str, int] | None = None,
+) -> int:
     iw = words(intent)
     nw = words(skill.name.replace("-", " "))
     dw = words(skill.description)
     if not iw:
         return 0
-    s = 0
-    s += 8 * len(iw & nw)
-    s += 3 * len(iw & dw)
+    s = 0.0
+    for token in iw & nw:
+        s += 8 * rarity(token, doc_freq)
+    for token in iw & dw:
+        s += 3 * rarity(token, doc_freq)
     lowered = intent.lower()
     skill_phrase = re.escape(skill.name.lower())
     if re.search(rf"(?<![a-z0-9_+-]){skill_phrase}(?![a-z0-9_+-])", lowered):
         s += 20
     for token in iw:
         if token in skill.path.lower():
-            s += 1
-    return s
+            s += 1 * rarity(token, doc_freq)
+    if s > 0 and favorites:
+        # Cap the boost at the base score: favorites win close calls but a
+        # barely-matching favorite can never bury a strong specific match.
+        s += min(float(favorites.get(skill.name.lower(), 0)), s)
+    return round(s)
 
 
-def route(intent: str, max_selected: int = 3, roots: list[Path] | None = None) -> RouteResult:
+def route(
+    intent: str, max_selected: int = 3, roots: list[Path] | None = None
+) -> RouteResult:
     skills = scan(roots)
+    favorites = load_favorites()
+    by_name = {
+        skill.name.lower(): skill for skill in skills if skill.name != SKILL_NAME
+    }
+    explicit_names = [name.lower() for name in EXPLICIT_SKILL_RE.findall(intent)]
+    bare_name = intent.strip().lower()
+    if not explicit_names and bare_name in by_name:
+        explicit_names = [bare_name]
+    if explicit_names:
+        selected = []
+        for name in explicit_names:
+            skill = by_name.get(name)
+            if skill is not None and skill not in selected:
+                selected.append(skill)
+        selected = selected[:max_selected]
+        block = render_router_block(
+            intent, selected, len(skills), roots or common_roots(), favorites
+        )
+        return RouteResult(
+            intent=intent,
+            selected=selected,
+            scanned=len(skills),
+            roots=[str(p) for p in (roots or common_roots())],
+            router_block=block,
+        )
+    doc_freq = doc_frequencies(skills)
     ranked = sorted(
-        ((score(intent, s), s) for s in skills if s.name != SKILL_NAME),
-        key=lambda x: (-x[0], x[1].name),
+        (
+            (score(intent, s, doc_freq, favorites), s)
+            for s in skills
+            if s.name != SKILL_NAME
+        ),
+        key=lambda x: (
+            -x[0],
+            0 if x[1].name.lower() in favorites else 1,
+            x[1].name,
+        ),
     )
     selected = [s for points, s in ranked if points > 0][:max_selected]
-    block = render_router_block(intent, selected, len(skills), roots or common_roots())
+    block = render_router_block(
+        intent, selected, len(skills), roots or common_roots(), favorites
+    )
     return RouteResult(
         intent=intent,
         selected=selected,
@@ -198,12 +351,19 @@ def route(intent: str, max_selected: int = 3, roots: list[Path] | None = None) -
     )
 
 
-def render_router_block(intent: str, selected: list[Skill], scanned: int, roots: list[Path]) -> str:
+def render_router_block(
+    intent: str,
+    selected: list[Skill],
+    scanned: int,
+    roots: list[Path],
+    favorites: dict[str, int] | None = None,
+) -> str:
     lines = [f"router: {SKILL_NAME}", f"intent: {intent}", f"scanned: {scanned}"]
     if selected:
         lines.append("load:")
         for s in selected:
-            lines.append(f"- {s.name}: {s.description[:160]} ({s.path})")
+            star = " ★" if favorites and s.name.lower() in favorites else ""
+            lines.append(f"- {s.name}{star}: {s.description[:160]} ({s.path})")
     else:
         lines.append("load: []")
     return "\n".join(lines)
@@ -250,13 +410,20 @@ def install(target: str, dry_run: bool = False) -> list[str]:
     written: list[str] = []
     for name in names:
         if name not in targets:
-            raise SystemExit(f"unknown target: {name}; choose {', '.join(targets)} or all")
+            raise SystemExit(
+                f"unknown target: {name}; choose {', '.join(targets)} or all"
+            )
         dest = targets[name]
         written.append(str(dest))
         if dry_run:
             continue
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT_SKILL, dest)
+        script_src = ROOT / "scripts" / "agent_token_saver.py"
+        if script_src.exists() and dest.name == "SKILL.md":
+            script_dest = dest.parent / "scripts" / script_src.name
+            script_dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(script_src, script_dest)
     return written
 
 
@@ -271,7 +438,11 @@ def main() -> int:
     p_bench.add_argument("intent")
     p_bench.add_argument("--max", type=int, default=3)
     p_install = sub.add_parser("install")
-    p_install.add_argument("--target", default="all", choices=["all", "hermes", "claude", "codex", "ggcoder", "opencode", "repo"])
+    p_install.add_argument(
+        "--target",
+        default="all",
+        choices=["all", "hermes", "claude", "codex", "ggcoder", "opencode", "repo"],
+    )
     p_install.add_argument("--dry-run", action="store_true")
     p_scan = sub.add_parser("scan")
     p_scan.add_argument("--json", action="store_true")
@@ -285,10 +456,24 @@ def main() -> int:
             print(rr.router_block)
         return 0
     if args.cmd == "bench":
-        print(json.dumps(bench(args.intent, max_selected=max(1, min(args.max, 5))), indent=2, ensure_ascii=False))
+        print(
+            json.dumps(
+                bench(args.intent, max_selected=max(1, min(args.max, 5))),
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
         return 0
     if args.cmd == "install":
-        print(json.dumps({"written": install(args.target, dry_run=args.dry_run), "dry_run": args.dry_run}, indent=2))
+        print(
+            json.dumps(
+                {
+                    "written": install(args.target, dry_run=args.dry_run),
+                    "dry_run": args.dry_run,
+                },
+                indent=2,
+            )
+        )
         return 0
     if args.cmd == "scan":
         skills = scan()

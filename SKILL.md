@@ -1,7 +1,7 @@
 ---
 name: agent-token-saver-skill-router
 description: Use when an agent has many skills/tools/prompts and must cut prompt tokens by routing adaptively. Keeps one tiny router hot, discovers candidate skills cheaply, lazy-loads only the smallest useful set, and benchmarks savings across Hermes, Claude Code, Codex CLI, OpenCode, Cursor, Windsurf, and repo-local agents.
-version: 1.0.2
+version: 1.0.3
 author: Supersynergy
 license: MIT
 metadata:
@@ -64,10 +64,12 @@ Common roots:
 ./.agents/skills
 ./.claude/skills
 ./.codex/skills
+~/.agents/skills
 ~/.hermes/skills
 ~/.claude/skills
 ~/.claude/cts/skills
 ~/.codex/skills
+~/.codex/plugins/cache
 ~/.opencode/skills
 ~/.cursor/skills
 ~/.windsurf/skills
@@ -76,20 +78,22 @@ Common roots:
 ## Adaptive Routing Loop
 
 1. **Classify** the request: objective, domain, risk, output.
-2. **Search** candidate skill names/descriptions with 2-5 specific keywords.
-3. **Score** candidates:
+2. **Resolve explicit names first**: `$SkillName` must exact-match before fuzzy scoring, including plugin-cache skills.
+3. **Search** candidate skill names/descriptions with 2-5 specific keywords.
+4. **Score** candidates:
    - 3 = directly required
    - 2 = materially improves quality/safety
    - 1 = maybe useful later
    - 0 = skip
-4. **Select** the smallest set:
+   - User favorites win close calls; generic tokens (matching many skills) are down-weighted.
+5. **Select** the smallest set:
    - 1 primary workflow skill
    - 0-2 domain boosters
    - 0-1 verification/release skill
    - 0-1 safety/compliance skill when risk exists
-5. **Load** only selected skills.
-6. **Execute** with tools.
-7. **Benchmark** token savings when changing router behavior.
+6. **Load** only selected skills.
+7. **Execute** with tools.
+8. **Benchmark** token savings when changing router behavior.
 
 ## CLI Helper
 
@@ -102,6 +106,12 @@ python3 scripts/agent_token_saver.py install --target all
 ```
 
 No dependencies. Python stdlib only.
+
+## Favorites & Noise Filter
+
+- **Favorites**: pin your go-to skills in `~/.agents/skill-favorites.txt` — one `name` or `name=weight` per line (default weight 6, `#` comments). Pinned skills get a boost and win close calls, marked `★` in router output. The boost applies only when the skill already matches the intent, so favorites never surface for unrelated tasks. Override the file path with `AGENT_SKILL_FAVORITES_FILE`.
+- **Noise filter**: scan skips backup/stale skill copies automatically — dir or flat-file names matching `*.bak*`, `*-backup`, `*.old`, `*.disabled`, `*-deprecated`.
+- **Specific beats generic**: intent tokens that match many skills (e.g. `cli`, `app`) are down-weighted by document frequency; rare, specific tokens dominate the ranking.
 
 ## Agent-Specific Notes
 
