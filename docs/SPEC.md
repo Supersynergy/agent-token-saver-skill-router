@@ -2,11 +2,15 @@
 
 ## Problem
 
-Agents with hundreds of skills often inject the full skill catalog into every fresh system prompt. This burns context, costs money, and can reduce prompt-cache effectiveness.
+Agents with hundreds of skills often inject the full skill catalog into every fresh system prompt. This burns context, costs money, distracts the model, and weakens prompt-cache efficiency.
 
 ## Contract
 
-Given a task intent and local skill roots, the router returns a compact selected skill set and a benchmark showing full-catalog vs router-token estimates.
+Given a task intent and local skill roots, the router returns:
+
+1. a compact selected skill set,
+2. a visible router block,
+3. a benchmark comparing full-catalog vs router-token estimates.
 
 ## Supported agents
 
@@ -18,11 +22,40 @@ Given a task intent and local skill roots, the router returns a compact selected
 - Cursor/Windsurf-compatible skill folders
 - repo-local `.agents/skills`
 
+## Skill shapes
+
+The scanner supports both common skill formats:
+
+```text
+skill-name/SKILL.md
+skill-name.md
+```
+
+Flat `.md` support is required for GG Coder-style skill folders.
+
+## Root discovery
+
+Default scan roots:
+
+1. repo `.agents/skills`
+2. repo `.claude/skills`
+3. repo `.codex/skills`
+4. `~/.hermes/skills`
+5. `~/.claude/skills`
+6. `~/.claude/cts/skills`
+7. `~/.codex/skills`
+8. `~/.gg/skills`
+9. `~/.opencode/skills`
+10. `~/.cursor/skills`
+11. `~/.windsurf/skills`
+12. `AGENT_SKILL_DIRS`
+
 ## Non-goals
 
 - Replacing native safety/approval policies.
 - Running remote code.
 - Requiring a Python package install.
+- Exact tokenizer billing for every model.
 
 ## Verification
 

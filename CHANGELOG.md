@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.2 — 2026-07-09
+
+- Rewrote the GitHub README around the core promise: save skill tokens while keeping skills lazy-loadable.
+- Added Humanlove-driven product framing, clearer proof tables, install paths, Hermes setup, FAQ, and development verification.
+- Added GG Coder flat `.md` skill discovery to the helper scan path (`~/.gg/skills/*.md`).
+
 ## 1.0.1 — 2026-07-09
 
 - Added a native GG Coder install target: `~/.gg/skills/agent-token-saver-skill-router.md`.

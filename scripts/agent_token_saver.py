@@ -19,7 +19,13 @@ SKILL_NAME = "agent-token-saver-skill-router"
 ROOT = Path(__file__).resolve().parents[1]
 ROOT_SKILL = ROOT / "SKILL.md"
 WORD_RE = re.compile(r"[a-zA-Z0-9_+-]{2,}")
+STOPWORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "how", "in",
+    "into", "is", "it", "make", "of", "on", "or", "that", "the", "this", "to", "use",
+    "using", "with", "without", "your",
+}
 EXCLUDE_DIRS = {".git", "node_modules", "target", ".venv", "venv", "__pycache__", ".archive"}
+FLAT_SKILL_SKIP = {"readme.md", "changelog.md", "license.md", "contributing.md"}
 
 
 @dataclass(frozen=True)
@@ -40,7 +46,7 @@ class RouteResult:
 
 
 def words(text: str) -> set[str]:
-    return {w.lower() for w in WORD_RE.findall(text or "")}
+    return {w.lower() for w in WORD_RE.findall(text or "") if w.lower() not in STOPWORDS}
 
 
 def estimate_tokens(text: str) -> int:
@@ -75,6 +81,16 @@ def parse_frontmatter(path: Path) -> tuple[str, str]:
     return name or path.parent.name, desc
 
 
+def looks_like_flat_skill(path: Path) -> bool:
+    if path.name.lower() in FLAT_SKILL_SKIP or path.suffix.lower() != ".md":
+        return False
+    try:
+        start = path.read_text(encoding="utf-8", errors="ignore")[:512]
+    except OSError:
+        return False
+    return start.startswith("---") and "\nname:" in start
+
+
 def common_roots(cwd: Path | None = None) -> list[Path]:
     home = Path.home()
     cwd = cwd or Path.cwd()
@@ -86,6 +102,7 @@ def common_roots(cwd: Path | None = None) -> list[Path]:
         home / ".claude" / "skills",
         home / ".claude" / "cts" / "skills",
         home / ".codex" / "skills",
+        home / ".gg" / "skills",
         home / ".opencode" / "skills",
         home / ".cursor" / "skills",
         home / ".windsurf" / "skills",
@@ -117,6 +134,14 @@ def iter_skill_files(root: Path, max_files: int) -> Iterable[Path]:
             count += 1
             if count >= max_files:
                 return
+        if Path(dirpath) == root:
+            for filename in sorted(filenames):
+                path = Path(dirpath) / filename
+                if looks_like_flat_skill(path):
+                    yield path
+                    count += 1
+                    if count >= max_files:
+                        return
 
 
 def scan(roots: list[Path] | None = None, max_files_per_root: int = 1000) -> list[Skill]:
@@ -147,7 +172,8 @@ def score(intent: str, skill: Skill) -> int:
     s += 8 * len(iw & nw)
     s += 3 * len(iw & dw)
     lowered = intent.lower()
-    if skill.name.lower() in lowered:
+    skill_phrase = re.escape(skill.name.lower())
+    if re.search(rf"(?<![a-z0-9_+-]){skill_phrase}(?![a-z0-9_+-])", lowered):
         s += 20
     for token in iw:
         if token in skill.path.lower():
