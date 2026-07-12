@@ -1,7 +1,7 @@
 ---
 name: agent-token-saver-skill-router
 description: Use when an agent has many skills/tools/prompts and must cut prompt tokens by routing adaptively. Keeps one tiny router hot, discovers candidate skills cheaply, lazy-loads only the smallest useful set, and benchmarks savings across Hermes, Claude Code, Codex CLI, OpenCode, Cursor, Windsurf, and repo-local agents.
-version: 1.0.3
+version: 1.0.4
 author: Supersynergy
 license: MIT
 metadata:

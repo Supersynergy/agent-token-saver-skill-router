@@ -47,6 +47,24 @@ class AgentTokenSaverTests(unittest.TestCase):
             self.assertEqual([s.name for s in result.selected], ["python-testing"])
             self.assertIn("python-testing", result.router_block)
 
+    def test_multi_token_match_beats_single_rare_name_token(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(
+                root,
+                "freedom-builder",
+                "Builder for cooperative wealth vehicles.",
+            )
+            write_skill(
+                root,
+                "python-testing",
+                "Debug failing pytest runs and flaky tests.",
+            )
+
+            result = mod.route("debug failing pytest in prompt builder", roots=[root])
+
+            self.assertEqual(result.selected[0].name, "python-testing")
+
     def test_route_ignores_stopwords_and_substring_name_hits(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td) / "skills"

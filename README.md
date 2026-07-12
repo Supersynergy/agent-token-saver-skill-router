@@ -10,6 +10,30 @@ Repo: https://github.com/Supersynergy/agent-token-saver-skill-router
 
 ---
 
+## Instant install (60 seconds)
+
+Claude Code:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Supersynergy/agent-token-saver-skill-router/main/install.sh | bash -s -- claude
+```
+
+Codex CLI:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Supersynergy/agent-token-saver-skill-router/main/install.sh | bash -s -- codex
+```
+
+Everything (Hermes, Claude Code, Codex, GG Coder, OpenCode, repo-local):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Supersynergy/agent-token-saver-skill-router/main/install.sh | bash -s -- all
+```
+
+Python 3 stdlib only. No package manager, no build step. Uninstall = delete the skill folder.
+
+---
+
 ## Why people love it
 
 Agents feel smarter when they are not drowning in context.
@@ -42,17 +66,29 @@ Measured on Maxim's Hermes profile, 2026-07-09:
 
 ### Universal local skill-library benchmark
 
-Measured with 422 installed skills:
+Measured with 458 installed skills (2026-07-12):
 
 | Mode | Chars | Est. tokens (`chars/4`) |
 |---|---:|---:|
-| Full skill catalog | 135,475 | 33,868 |
+| Full skill catalog | 148,323 | 37,080 |
 | Router result | 908 | 227 |
-| Saved | 134,567 | 33,641 |
+| Saved | 147,415 | 36,853 |
 
-**Reduction: 99.33% of the routed skill context.**
+**Reduction: 99.39% of the routed skill context.**
 
 > Token estimate uses `chars / 4`. It is intentionally simple, transparent, and model-agnostic.
+
+### Prove it on your machine
+
+These numbers come from one large local skill library. The claim only matters if it survives contact with *your* catalog:
+
+```bash
+python3 scripts/agent_token_saver.py bench "your typical task here"
+```
+
+Post your `bench` JSON (skills scanned, reduction %, agent used) as a
+[benchmark issue](https://github.com/Supersynergy/agent-token-saver-skill-router/issues/new) —
+third-party numbers are the proof asset this project wants most.
 
 ---
 
@@ -156,17 +192,25 @@ You get:
 
 ```json
 {
-  "skills_scanned": 422,
-  "full_est_tokens": 33868,
+  "skills_scanned": 458,
+  "full_est_tokens": 37080,
   "router_est_tokens": 227,
-  "saved_est_tokens": 33641,
-  "reduction_pct": 99.33
+  "saved_est_tokens": 36853,
+  "reduction_pct": 99.39
 }
 ```
 
 ---
 
 ## Install
+
+One-liner (no checkout needed):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Supersynergy/agent-token-saver-skill-router/main/install.sh | bash -s -- claude   # or codex / hermes / ggcoder / opencode / repo / all
+```
+
+From a checkout:
 
 ```bash
 git clone https://github.com/Supersynergy/agent-token-saver-skill-router.git

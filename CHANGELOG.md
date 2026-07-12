@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.4 — 2026-07-12
+
+- Fixed routing regression: a skill matching several intent tokens now outranks a skill that hit one lucky rare name token (coverage multiplier in `score`; red/green regression test added).
+- Made `install.sh` curl-pipeable: `curl -fsSL .../install.sh | bash -s -- claude` clones a shallow temp checkout when run outside the repo.
+- README: instant-install one-liners for Claude Code/Codex, fresh 458-skill benchmark (99.39% catalog reduction, 2026-07-12), and a "prove it on your machine" section inviting third-party benchmark issues.
+
 ## 1.0.3 — 2026-07-09
 
 - Added user favorites: `~/.agents/skill-favorites.txt` (`name` or `name=weight`) boosts pinned skills on matching intents and marks them `★` in router output; override path via `AGENT_SKILL_FAVORITES_FILE`. Favorites never surface for irrelevant intents.

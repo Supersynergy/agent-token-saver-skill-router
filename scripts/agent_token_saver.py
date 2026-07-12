@@ -282,6 +282,11 @@ def score(
         s += 8 * rarity(token, doc_freq)
     for token in iw & dw:
         s += 3 * rarity(token, doc_freq)
+    # Coverage: a skill matching several intent tokens must outrank a skill
+    # that hit one lucky rare token (e.g. "builder" in an unrelated name).
+    matched = (iw & nw) | (iw & dw)
+    if len(matched) > 1:
+        s *= len(matched)
     lowered = intent.lower()
     skill_phrase = re.escape(skill.name.lower())
     if re.search(rf"(?<![a-z0-9_+-]){skill_phrase}(?![a-z0-9_+-])", lowered):
