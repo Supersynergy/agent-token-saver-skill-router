@@ -1,7 +1,7 @@
 ---
 name: agent-token-saver-skill-router
 description: Use when an agent has many skills/tools/prompts and must cut prompt tokens by routing adaptively. Keeps one tiny router hot, discovers candidate skills cheaply, lazy-loads only the smallest useful set, and benchmarks savings across Hermes, Claude Code, Codex CLI, OpenCode, Cursor, Windsurf, and repo-local agents.
-version: 1.0.6
+version: 1.0.7
 author: Supersynergy
 license: MIT
 metadata:
@@ -17,6 +17,9 @@ metadata:
 Use this skill as the always-hot router when the agent can see many skills, tools, prompts, MCP schemas, or command references.
 
 Goal: keep the system prompt tiny, preserve prefix-cache stability, and load only the skills that actually change the next action.
+
+For native hooks, shell-output compression, deterministic projections and the
+full measured stack, see https://github.com/Supersynergy/agent-token-saver.
 
 ## When to Use
 

@@ -8,6 +8,10 @@ Instead, your agent starts with one small routing skill, scans cheap metadata, a
 
 Repo: https://github.com/Supersynergy/agent-token-saver-skill-router
 
+Need the complete stack—shell-output compression, deterministic projections,
+agent hooks, profiles and end-to-end benchmarks? Use the companion full-stack
+repository: https://github.com/Supersynergy/agent-token-saver
+
 ---
 
 ## Instant install (60 seconds)

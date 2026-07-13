@@ -67,6 +67,11 @@ TOKEN_NORMALIZATION = {
 PLATFORM_TOKENS = {
     "python", "node", "nodejs", "javascript", "typescript", "rust", "golang", "go"
 }
+SECURITY_TOKENS = {
+    "auth", "authentication", "authorization", "owasp", "secret", "secrets",
+    "secure", "security", "vulnerability", "vulnerabilities",
+}
+REVIEW_TOKENS = {"audit", "review", "regression", "regressions"}
 EXCLUDE_DIRS = {
     ".git",
     "node_modules",
@@ -345,6 +350,13 @@ def score(
         s += 20
     if is_software_dev and "python" in iw and "python" in (nw | dw | kw):
         s += 12
+    # Security review is a closed local-code task. Prefer skills that actually
+    # cover security/review; a generic web/API skill must not win on "api".
+    skill_words = nw | dw | kw
+    if iw & SECURITY_TOKENS and skill_words & SECURITY_TOKENS:
+        s += 20
+    if iw & REVIEW_TOKENS and skill_words & (SECURITY_TOKENS | REVIEW_TOKENS):
+        s += 12
     skill_platforms = (nw | dw | kw) & PLATFORM_TOKENS
     requested_platforms = iw & PLATFORM_TOKENS
     if skill_platforms and requested_platforms and not (skill_platforms & requested_platforms):
@@ -401,6 +413,19 @@ def route(
             x[1].name,
         ),
     )
+    intent_words = words(intent)
+    if intent_words & SECURITY_TOKENS and intent_words & REVIEW_TOKENS:
+        review_ranked = []
+        for points, skill in ranked:
+            skill_words = (
+                words(skill.name.replace("-", " "))
+                | words(skill.description)
+                | words(skill.keywords)
+            )
+            if skill_words & REVIEW_TOKENS and skill_words & SECURITY_TOKENS:
+                review_ranked.append((points, skill))
+        if review_ranked:
+            ranked = review_ranked
     selected = [s for points, s in ranked if points > 0][:max_selected]
     block = render_router_block(
         intent, selected, len(skills), roots or common_roots(), favorites

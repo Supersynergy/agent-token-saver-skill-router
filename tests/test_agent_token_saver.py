@@ -163,6 +163,44 @@ class AgentTokenSaverTests(unittest.TestCase):
                 ["python-debugpy", "systematic-debugging", "test-driven-development"],
             )
 
+    def test_security_review_beats_generic_web_api_match(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(
+                root,
+                "superweb",
+                "Search and scrape web APIs and current documentation.",
+                "web, search, api",
+            )
+            write_skill(
+                root,
+                "requesting-code-review",
+                "Review code changes, security, and regression risk before release.",
+                "review, regression",
+            )
+            write_skill(
+                root,
+                "security-hardening",
+                "Audit authentication and authorization for OWASP vulnerabilities.",
+                "security, auth, owasp",
+            )
+            favorites = Path(td) / "favorites.txt"
+            favorites.write_text("superweb=8\n", encoding="utf-8")
+
+            with patch.dict(
+                os.environ, {"AGENT_SKILL_FAVORITES_FILE": str(favorites)}
+            ):
+                result = mod.route(
+                    "review Python API auth bug for security and regressions",
+                    roots=[root],
+                )
+
+            names = [skill.name for skill in result.selected]
+            self.assertCountEqual(
+                names[:2], ["security-hardening", "requesting-code-review"]
+            )
+            self.assertNotIn("superweb", names)
+
     def test_common_roots_include_codex_plugin_cache(self):
         with tempfile.TemporaryDirectory() as td:
             home = Path(td)

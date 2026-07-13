@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.7 — 2026-07-13
+
+- Prefer security/review skills over a generic web/API match for security-review intents; added a regression test.
+- Cross-linked the measured `agent-token-saver` full stack while keeping this router dependency-free.
+
 ## 1.0.6 — 2026-07-13
 
 - Fixed live pytest/debug routing: scanner now includes frontmatter tags, normalizes common test/debug inflections, and uses additive coverage rather than an explosive multiplier.
