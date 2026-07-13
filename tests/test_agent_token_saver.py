@@ -49,6 +49,28 @@ class AgentTokenSaverTests(unittest.TestCase):
             self.assertEqual([s.name for s in result.selected], ["python-testing"])
             self.assertIn("python-testing", result.router_block)
 
+    def test_simple_factual_or_arithmetic_prompt_loads_no_skill(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(root, "plus-pro", "Build advanced plus workflows.")
+            write_skill(root, "fact-search", "Search facts on the web.")
+
+            arithmetic = mod.route("What is 2 plus 2?", roots=[root])
+            factual = mod.route("Capital of France?", roots=[root])
+
+            self.assertEqual(arithmetic.selected, [])
+            self.assertEqual(factual.selected, [])
+
+    def test_strict_route_rejects_ambiguous_top_scores(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(root, "release-a", "Review and release a repository.")
+            write_skill(root, "release-b", "Review and release a repository.")
+
+            result = mod.route("review and release this repo", roots=[root], strict=True)
+
+            self.assertEqual(result.selected, [])
+
     def test_multi_token_match_beats_single_rare_name_token(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td) / "skills"
@@ -338,6 +360,67 @@ class AgentTokenSaverTests(unittest.TestCase):
 
             self.assertEqual(result.selected[0].name, "rust-release")
 
+    def test_token_stack_beats_platform_and_unrelated_favorite(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(
+                root,
+                "token-stack-operations",
+                "Audit token-saving and context-saving stacks across Codex. Covers noisy tool output, Synapse memory, skills, and subagents.",
+                "tokens, context, memory, synapse, routing",
+            )
+            write_skill(
+                root,
+                "codex",
+                "Delegate coding to OpenAI Codex CLI for features and PRs.",
+                "coding, codex",
+            )
+            write_skill(
+                root,
+                "swarmfish",
+                "Run prediction simulations with many Codex subagents and produce output.",
+                "simulation, forecast",
+            )
+            write_skill(
+                root,
+                "peft-fine-tuning",
+                "Optimize model memory and accuracy with parameter-efficient fine tuning.",
+                "memory, optimization, training",
+            )
+            fav = Path(td) / "favs.txt"
+            fav.write_text("swarmfish=8\n", encoding="utf-8")
+
+            with patch.dict(os.environ, {"AGENT_SKILL_FAVORITES_FILE": str(fav)}):
+                result = mod.route(
+                    "optimize Codex subagents, Synapse memory, token context, and noisy tool outputs",
+                    roots=[root],
+                )
+
+            self.assertEqual(result.selected[0].name, "token-stack-operations")
+            self.assertNotIn("codex", [s.name for s in result.selected])
+            self.assertNotEqual(result.selected[0].name, "swarmfish")
+            self.assertNotIn("peft-fine-tuning", [s.name for s in result.selected])
+
+    def test_token_stack_audit_beats_generic_goal_audit(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(
+                root,
+                "goalmaster",
+                "Formulate, refine, audit, and run long-running goals.",
+                "goal, audit, planning",
+            )
+            write_skill(
+                root,
+                "token-stack-operations",
+                "Audit token-saving context stacks across Codex with routing, Synapse, and lean MCP defaults.",
+                "token, saving, stack, context, routing, synapse",
+            )
+
+            result = mod.route("audit Codex token saving stack", roots=[root])
+
+            self.assertEqual(result.selected[0].name, "token-stack-operations")
+
     def test_install_dry_run_lists_targets(self):
         with tempfile.TemporaryDirectory() as td:
             with patch.dict(os.environ, {"HOME": td}):
@@ -347,6 +430,17 @@ class AgentTokenSaverTests(unittest.TestCase):
             self.assertTrue(any(".claude" in p for p in written))
             self.assertTrue(any(".codex" in p for p in written))
             self.assertTrue(any(".gg" in p for p in written))
+            self.assertTrue(any(p.endswith("agent-skill-route") for p in written))
+
+    def test_ggcoder_install_also_writes_global_router_cli(self):
+        with tempfile.TemporaryDirectory() as td:
+            with patch.dict(os.environ, {"HOME": td}):
+                written = mod.install("ggcoder")
+
+            launcher = Path(td) / ".local" / "bin" / "agent-skill-route"
+            self.assertIn(str(launcher), written)
+            self.assertTrue(launcher.is_file())
+            self.assertTrue(os.access(launcher, os.X_OK))
 
 
 if __name__ == "__main__":

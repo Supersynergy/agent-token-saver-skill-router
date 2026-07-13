@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.0 — 2026-07-13
+
+- Split hyphenated metadata into meaningful routing tokens.
+- Added a zero-skill gate for factual and arithmetic prompts.
+- Added strict fuzzy routing with an absolute score and ambiguity margin.
+- Prevented generic one-word platform names and unrelated favorites from dominating.
+- Installed the portable `agent-skill-route` CLI for every target, including GG Coder.
+- Added regression coverage for token-stack routing, irrelevant ML/simulation matches, and GG CLI installation.
+
 ## 1.0.7 — 2026-07-13
 
 - Prefer security/review skills over a generic web/API match for security-review intents; added a regression test.

@@ -20,7 +20,7 @@ from typing import Iterable
 SKILL_NAME = "agent-token-saver-skill-router"
 ROOT = Path(__file__).resolve().parents[1]
 ROOT_SKILL = ROOT / "SKILL.md"
-WORD_RE = re.compile(r"[a-zA-Z0-9_+-]{2,}")
+WORD_RE = re.compile(r"[a-zA-Z0-9+]{2,}")
 EXPLICIT_SKILL_RE = re.compile(r"\$([a-zA-Z0-9_:+.-]+)")
 STOPWORDS = {
     "a",
@@ -50,10 +50,12 @@ STOPWORDS = {
     "using",
     "with",
     "without",
+    "what",
     "your",
     "builder",
 }
 TOKEN_NORMALIZATION = {
+    "contexts": "context",
     "tests": "test",
     "testing": "test",
     "pytest": "test",
@@ -63,6 +65,14 @@ TOKEN_NORMALIZATION = {
     "failed": "fail",
     "failure": "fail",
     "failures": "fail",
+    "memories": "memory",
+    "optimized": "optimize",
+    "optimizing": "optimize",
+    "optimization": "optimize",
+    "outputs": "output",
+    "subagents": "subagent",
+    "tokens": "token",
+    "tools": "tool",
 }
 PLATFORM_TOKENS = {
     "python", "node", "nodejs", "javascript", "typescript", "rust", "golang", "go"
@@ -72,6 +82,46 @@ SECURITY_TOKENS = {
     "secure", "security", "vulnerability", "vulnerabilities",
 }
 REVIEW_TOKENS = {"audit", "review", "regression", "regressions"}
+TOKEN_CONTEXT_TOKENS = {
+    "context",
+    "memory",
+    "router",
+    "routing",
+    "saving",
+    "skill",
+    "stack",
+    "synapse",
+    "token",
+}
+WORKFLOW_TOKENS = {
+    "analyze",
+    "audit",
+    "benchmark",
+    "build",
+    "code",
+    "create",
+    "debug",
+    "deploy",
+    "design",
+    "edit",
+    "explain",
+    "fail",
+    "fix",
+    "implement",
+    "install",
+    "optimize",
+    "plan",
+    "readme",
+    "refactor",
+    "release",
+    "research",
+    "review",
+    "route",
+    "scrape",
+    "search",
+    "test",
+    "write",
+}
 EXCLUDE_DIRS = {
     ".git",
     "node_modules",
@@ -91,6 +141,8 @@ FLAT_SKILL_SKIP = {"readme.md", "changelog.md", "license.md", "contributing.md"}
 DEFAULT_FAVORITE_BOOST = 6
 DEFAULT_MAX_SELECTED = 3
 MAX_SELECTED = 10
+MIN_STRICT_SCORE = 8
+MIN_STRICT_MARGIN = 3
 
 
 @dataclass(frozen=True)
@@ -340,7 +392,12 @@ def score(
         s += 4 * (len(matched) - 1)
     lowered = intent.lower()
     skill_phrase = re.escape(skill.name.lower())
-    if re.search(rf"(?<![a-z0-9_+-]){skill_phrase}(?![a-z0-9_+-])", lowered):
+    # A generic one-word platform name such as "codex" is usually context,
+    # not an explicit request to delegate to that skill. Bare names and
+    # `$skill` are already resolved exactly in route().
+    if "-" in skill.name and re.search(
+        rf"(?<![a-z0-9_+-]){skill_phrase}(?![a-z0-9_+-])", lowered
+    ):
         s += 20
     for token in iw:
         if token in skill.path.lower():
@@ -357,11 +414,22 @@ def score(
         s += 20
     if iw & REVIEW_TOKENS and skill_words & (SECURITY_TOKENS | REVIEW_TOKENS):
         s += 12
+    # When a request clearly clusters around token/context infrastructure,
+    # reject accidental matches such as ML skills that only mention "memory"
+    # or "accuracy". Require the candidate itself to cover the domain broadly.
+    if len(iw & TOKEN_CONTEXT_TOKENS) >= 2:
+        domain_coverage = len(skill_words & TOKEN_CONTEXT_TOKENS)
+        if domain_coverage >= 2:
+            s += 12
+        elif domain_coverage == 0:
+            s -= 12
+    if "synapse" in iw and "synapse" not in skill_words:
+        s -= 10
     skill_platforms = (nw | dw | kw) & PLATFORM_TOKENS
     requested_platforms = iw & PLATFORM_TOKENS
     if skill_platforms and requested_platforms and not (skill_platforms & requested_platforms):
         s -= 8
-    if s > 0 and favorites:
+    if s > 0 and favorites and ((iw & nw) or (iw & kw)):
         # Cap the boost at the base score: favorites win close calls but a
         # barely-matching favorite can never bury a strong specific match.
         s += min(float(favorites.get(skill.name.lower(), 0)), s)
@@ -372,6 +440,7 @@ def route(
     intent: str,
     max_selected: int = DEFAULT_MAX_SELECTED,
     roots: list[Path] | None = None,
+    strict: bool = False,
 ) -> RouteResult:
     max_selected = selection_limit(max_selected)
     skills = scan(roots)
@@ -400,6 +469,18 @@ def route(
             roots=[str(p) for p in (roots or common_roots())],
             router_block=block,
         )
+    intent_words = words(intent)
+    if not (intent_words & WORKFLOW_TOKENS):
+        block = render_router_block(
+            intent, [], len(skills), roots or common_roots(), favorites
+        )
+        return RouteResult(
+            intent=intent,
+            selected=[],
+            scanned=len(skills),
+            roots=[str(p) for p in (roots or common_roots())],
+            router_block=block,
+        )
     doc_freq = doc_frequencies(skills)
     ranked = sorted(
         (
@@ -413,7 +494,6 @@ def route(
             x[1].name,
         ),
     )
-    intent_words = words(intent)
     if intent_words & SECURITY_TOKENS and intent_words & REVIEW_TOKENS:
         review_ranked = []
         for points, skill in ranked:
@@ -426,7 +506,16 @@ def route(
                 review_ranked.append((points, skill))
         if review_ranked:
             ranked = review_ranked
-    selected = [s for points, s in ranked if points > 0][:max_selected]
+    positive = [(points, skill) for points, skill in ranked if points > 0]
+    if strict:
+        if not positive or positive[0][0] < MIN_STRICT_SCORE:
+            positive = []
+        elif len(positive) > 1 and positive[0][0] - positive[1][0] < MIN_STRICT_MARGIN:
+            positive = []
+    confidence_floor = max(4, round(positive[0][0] * 0.33)) if positive else 0
+    selected = [
+        skill for points, skill in positive if points >= confidence_floor
+    ][:max_selected]
     block = render_router_block(
         intent, selected, len(skills), roots or common_roots(), favorites
     )
@@ -512,6 +601,12 @@ def install(target: str, dry_run: bool = False) -> list[str]:
             script_dest = dest.parent / "scripts" / script_src.name
             script_dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(script_src, script_dest)
+    launcher = home / ".local" / "bin" / "agent-skill-route"
+    written.append(str(launcher))
+    if not dry_run:
+        launcher.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / "scripts" / "agent_token_saver.py", launcher)
+        launcher.chmod(0o755)
     return written
 
 
@@ -522,6 +617,7 @@ def main() -> int:
     p_route.add_argument("intent")
     p_route.add_argument("--max", type=int, default=DEFAULT_MAX_SELECTED)
     p_route.add_argument("--json", action="store_true")
+    p_route.add_argument("--strict", action="store_true")
     p_bench = sub.add_parser("bench")
     p_bench.add_argument("intent")
     p_bench.add_argument("--max", type=int, default=DEFAULT_MAX_SELECTED)
@@ -537,7 +633,11 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.cmd == "route":
-        rr = route(args.intent, max_selected=selection_limit(args.max))
+        rr = route(
+            args.intent,
+            max_selected=selection_limit(args.max),
+            strict=args.strict,
+        )
         if args.json:
             print(json.dumps(asdict(rr), indent=2, ensure_ascii=False))
         else:

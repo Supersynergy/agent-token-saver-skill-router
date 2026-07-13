@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - run: python3 -m py_compile scripts/agent_token_saver.py
+      - run: python3 -m unittest discover -s tests -v
+      - run: bash -n install.sh
+
+  neutral-ggcoder:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Fresh HOME install and zero-skill gate
+        run: |
+          export HOME="$(mktemp -d)"
+          bash install.sh ggcoder
+          test -x "$HOME/.local/bin/agent-skill-route"
+          test -f "$HOME/.gg/skills/agent-token-saver-skill-router.md"
+          "$HOME/.local/bin/agent-skill-route" \
+            route "What is 2 plus 2?" --strict --json > result.json
+          python3 -c 'import json; assert json.load(open("result.json"))["selected"] == []'

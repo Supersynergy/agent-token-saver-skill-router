@@ -110,6 +110,7 @@ Default policy:
 
 - keep exactly **one** router skill hot
 - load **0–3** skills normally
+- automatic hooks use `--strict --max 1`; ambiguous routes return **zero**
 - allow a **10-path ceiling** only for broad controller stacks
 - give each subagent/process only its own **1–3 active skills**
 - use tools for cheap facts
@@ -149,6 +150,7 @@ No package manager. No npm. No node_modules. No Cargo build. No venv.
 
 ```bash
 python3 scripts/agent_token_saver.py route "debug failing pytest in Hermes prompt builder"
+agent-skill-route route "optimize token context" --strict --max 1
 python3 scripts/agent_token_saver.py bench "debug failing pytest in Hermes prompt builder"
 python3 scripts/agent_token_saver.py route "release with security review and rollback" --max 10
 python3 scripts/agent_token_saver.py scan --json
@@ -229,6 +231,8 @@ Or use the Python helper directly:
 ```bash
 python3 scripts/agent_token_saver.py install --target all
 ```
+
+Every target also receives `~/.local/bin/agent-skill-route`, including GG Coder.
 
 Dry-run first:
 
@@ -355,7 +359,10 @@ just bench
 
 No.
 
-It keeps them available and lazy-loadable. It only prevents the full catalog from being injected into every prompt.
+It keeps them available and lazy-loadable. On hosts with router-only mode it
+prevents a full catalog from being injected. Codex already exposes skill
+metadata progressively; there the strict router is an optional selector, not a
+claim that Codex otherwise sends every skill body.
 
 ### Why Python?
 

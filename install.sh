@@ -11,8 +11,6 @@ else
   git clone --quiet --depth 1 https://github.com/Supersynergy/agent-token-saver-skill-router.git "$repo"
 fi
 python3 "$repo/scripts/agent_token_saver.py" install --target "$target"
-cat <<'MSG'
-
-Installed agent-token-saver-skill-router.
-Restart the target agent or start a fresh session so prompt caches rebuild.
-MSG
+printf '\n%s\n%s\n' \
+  'Installed agent-token-saver-skill-router.' \
+  'Restart the target agent or start a fresh session so prompt caches rebuild.'
