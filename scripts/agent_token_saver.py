@@ -51,6 +51,21 @@ STOPWORDS = {
     "with",
     "without",
     "your",
+    "builder",
+}
+TOKEN_NORMALIZATION = {
+    "tests": "test",
+    "testing": "test",
+    "pytest": "test",
+    "debugging": "debug",
+    "debugger": "debug",
+    "failing": "fail",
+    "failed": "fail",
+    "failure": "fail",
+    "failures": "fail",
+}
+PLATFORM_TOKENS = {
+    "python", "node", "nodejs", "javascript", "typescript", "rust", "golang", "go"
 }
 EXCLUDE_DIRS = {
     ".git",
@@ -69,12 +84,15 @@ NOISE_NAME_RE = re.compile(
 )
 FLAT_SKILL_SKIP = {"readme.md", "changelog.md", "license.md", "contributing.md"}
 DEFAULT_FAVORITE_BOOST = 6
+DEFAULT_MAX_SELECTED = 3
+MAX_SELECTED = 10
 
 
 @dataclass(frozen=True)
 class Skill:
     name: str
     description: str
+    keywords: str
     path: str
     root: str
 
@@ -89,9 +107,15 @@ class RouteResult:
 
 
 def words(text: str) -> set[str]:
-    return {
-        w.lower() for w in WORD_RE.findall(text or "") if w.lower() not in STOPWORDS
-    }
+    tokens: set[str] = set()
+    for raw in WORD_RE.findall(text or ""):
+        lowered = raw.lower()
+        if lowered in STOPWORDS:
+            continue
+        tokens.add(TOKEN_NORMALIZATION.get(lowered, lowered))
+        if lowered == "pytest":
+            tokens.add("python")
+    return tokens
 
 
 def favorites_file() -> Path:
@@ -127,16 +151,22 @@ def estimate_tokens(text: str) -> int:
     return max(1, len(text) // 4) if text else 0
 
 
-def parse_frontmatter(path: Path) -> tuple[str, str]:
+def selection_limit(value: int) -> int:
+    """Keep stacks bounded even for callers that bypass the CLI."""
+    return max(1, min(value, MAX_SELECTED))
+
+
+def parse_frontmatter(path: Path) -> tuple[str, str, str]:
     text = path.read_text(encoding="utf-8", errors="ignore")
     if not text.startswith("---"):
-        return path.parent.name, ""
+        return path.parent.name, "", ""
     end = text.find("\n---", 3)
     if end == -1:
-        return path.parent.name, ""
+        return path.parent.name, "", ""
     fm = text[3:end]
     name = ""
     desc = ""
+    tags = ""
     lines = fm.splitlines()
     for i, line in enumerate(lines):
         if line.startswith("name:"):
@@ -152,7 +182,10 @@ def parse_frontmatter(path: Path) -> tuple[str, str]:
                 desc = " ".join(x for x in tail if x).strip()
             else:
                 desc = raw.strip("\"'")
-    return name or path.parent.name, desc
+        elif line.strip().startswith("tags:"):
+            raw = line.split(":", 1)[1].strip()
+            tags = " ".join(WORD_RE.findall(raw))
+    return name or path.parent.name, desc, tags
 
 
 def looks_like_flat_skill(path: Path) -> bool:
@@ -233,7 +266,7 @@ def scan(
     for root in roots:
         for path in iter_skill_files(root, max_files_per_root):
             try:
-                name, desc = parse_frontmatter(path)
+                name, desc, tags = parse_frontmatter(path)
             except OSError:
                 continue
             key = name.lower()
@@ -241,7 +274,13 @@ def scan(
                 continue
             seen_names.add(key)
             skills.append(
-                Skill(name=name, description=desc, path=str(path), root=str(root))
+                Skill(
+                    name=name,
+                    description=desc,
+                    keywords=tags,
+                    path=str(path),
+                    root=str(root),
+                )
             )
     return skills
 
@@ -249,7 +288,11 @@ def scan(
 def doc_frequencies(skills: list[Skill]) -> Counter:
     df: Counter = Counter()
     for skill in skills:
-        for token in words(skill.name.replace("-", " ")) | words(skill.description):
+        for token in (
+            words(skill.name.replace("-", " "))
+            | words(skill.description)
+            | words(skill.keywords)
+        ):
             df[token] += 1
     return df
 
@@ -275,6 +318,7 @@ def score(
     iw = words(intent)
     nw = words(skill.name.replace("-", " "))
     dw = words(skill.description)
+    kw = words(skill.keywords)
     if not iw:
         return 0
     s = 0.0
@@ -282,11 +326,13 @@ def score(
         s += 8 * rarity(token, doc_freq)
     for token in iw & dw:
         s += 3 * rarity(token, doc_freq)
+    for token in iw & kw:
+        s += 6 * rarity(token, doc_freq)
     # Coverage: a skill matching several intent tokens must outrank a skill
     # that hit one lucky rare token (e.g. "builder" in an unrelated name).
-    matched = (iw & nw) | (iw & dw)
+    matched = (iw & nw) | (iw & dw) | (iw & kw)
     if len(matched) > 1:
-        s *= len(matched)
+        s += 4 * (len(matched) - 1)
     lowered = intent.lower()
     skill_phrase = re.escape(skill.name.lower())
     if re.search(rf"(?<![a-z0-9_+-]){skill_phrase}(?![a-z0-9_+-])", lowered):
@@ -294,6 +340,15 @@ def score(
     for token in iw:
         if token in skill.path.lower():
             s += 1 * rarity(token, doc_freq)
+    is_software_dev = "/software-development/" in skill.path
+    if is_software_dev and iw & {"debug", "test", "fail"}:
+        s += 20
+    if is_software_dev and "python" in iw and "python" in (nw | dw | kw):
+        s += 12
+    skill_platforms = (nw | dw | kw) & PLATFORM_TOKENS
+    requested_platforms = iw & PLATFORM_TOKENS
+    if skill_platforms and requested_platforms and not (skill_platforms & requested_platforms):
+        s -= 8
     if s > 0 and favorites:
         # Cap the boost at the base score: favorites win close calls but a
         # barely-matching favorite can never bury a strong specific match.
@@ -302,8 +357,11 @@ def score(
 
 
 def route(
-    intent: str, max_selected: int = 3, roots: list[Path] | None = None
+    intent: str,
+    max_selected: int = DEFAULT_MAX_SELECTED,
+    roots: list[Path] | None = None,
 ) -> RouteResult:
+    max_selected = selection_limit(max_selected)
     skills = scan(roots)
     favorites = load_favorites()
     by_name = {
@@ -378,7 +436,7 @@ def full_catalog_text(skills: list[Skill]) -> str:
     return "\n".join(f"- {s.name}: {s.description}" for s in skills)
 
 
-def bench(intent: str, max_selected: int = 3) -> dict[str, object]:
+def bench(intent: str, max_selected: int = DEFAULT_MAX_SELECTED) -> dict[str, object]:
     roots = common_roots()
     skills = scan(roots)
     rr = route(intent, max_selected=max_selected, roots=roots)
@@ -437,11 +495,11 @@ def main() -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
     p_route = sub.add_parser("route")
     p_route.add_argument("intent")
-    p_route.add_argument("--max", type=int, default=3)
+    p_route.add_argument("--max", type=int, default=DEFAULT_MAX_SELECTED)
     p_route.add_argument("--json", action="store_true")
     p_bench = sub.add_parser("bench")
     p_bench.add_argument("intent")
-    p_bench.add_argument("--max", type=int, default=3)
+    p_bench.add_argument("--max", type=int, default=DEFAULT_MAX_SELECTED)
     p_install = sub.add_parser("install")
     p_install.add_argument(
         "--target",
@@ -454,7 +512,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.cmd == "route":
-        rr = route(args.intent, max_selected=max(1, min(args.max, 5)))
+        rr = route(args.intent, max_selected=selection_limit(args.max))
         if args.json:
             print(json.dumps(asdict(rr), indent=2, ensure_ascii=False))
         else:
@@ -463,7 +521,7 @@ def main() -> int:
     if args.cmd == "bench":
         print(
             json.dumps(
-                bench(args.intent, max_selected=max(1, min(args.max, 5))),
+                bench(args.intent, max_selected=selection_limit(args.max)),
                 indent=2,
                 ensure_ascii=False,
             )

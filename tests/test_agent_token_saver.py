@@ -15,11 +15,13 @@ sys.modules[spec.name] = mod
 spec.loader.exec_module(mod)
 
 
-def write_skill(base: Path, name: str, desc: str):
+def write_skill(base: Path, name: str, desc: str, tags: str = ""):
     d = base / name
     d.mkdir(parents=True)
+    metadata = f"\nmetadata:\n  hermes:\n    tags: [{tags}]" if tags else ""
     (d / "SKILL.md").write_text(
-        f"---\nname: {name}\ndescription: {desc}\n---\n\n# {name}\n", encoding="utf-8"
+        f"---\nname: {name}\ndescription: {desc}{metadata}\n---\n\n# {name}\n",
+        encoding="utf-8",
     )
 
 
@@ -99,6 +101,67 @@ class AgentTokenSaverTests(unittest.TestCase):
             result = mod.route("$pdf", roots=[root])
 
             self.assertEqual([s.name for s in result.selected], ["pdf"])
+
+    def test_stack_allows_ten_explicit_skills_but_caps_higher_requests(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            names = [f"skill-{i}" for i in range(12)]
+            for name in names:
+                write_skill(root, name, f"Use {name} for this workflow.")
+
+            prompt = " ".join(f"${name}" for name in names)
+            result = mod.route(prompt, max_selected=99, roots=[root])
+
+            self.assertEqual([s.name for s in result.selected], names[:10])
+            self.assertEqual(mod.selection_limit(0), 1)
+            self.assertEqual(mod.selection_limit(99), 10)
+
+    def test_tags_and_normalized_testing_terms_beat_generic_builder(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            software = root / "software-development"
+            write_skill(
+                root,
+                "wealth-builder",
+                "Build cooperative wealth vehicles for friends.",
+            )
+            write_skill(
+                root,
+                "hermes-atropos-environments",
+                "Build, test, and debug Hermes RL environments.",
+                "atropos, rl, training",
+            )
+            write_skill(
+                software,
+                "python-debugpy",
+                "Debug Python programs with pdb.",
+                "debugging, python",
+            )
+            write_skill(
+                software,
+                "test-driven-development",
+                "Use red-green-refactor before code.",
+                "testing, tdd",
+            )
+            write_skill(
+                software,
+                "systematic-debugging",
+                "Find root causes before fixing bugs.",
+                "debugging, troubleshooting",
+            )
+            write_skill(
+                software,
+                "node-inspect-debugger",
+                "Debug Node.js programs.",
+                "debugging, nodejs",
+            )
+
+            result = mod.route("debug failing pytest in Hermes prompt builder", roots=[root])
+
+            self.assertCountEqual(
+                [s.name for s in result.selected],
+                ["python-debugpy", "systematic-debugging", "test-driven-development"],
+            )
 
     def test_common_roots_include_codex_plugin_cache(self):
         with tempfile.TemporaryDirectory() as td:

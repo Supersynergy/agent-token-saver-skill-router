@@ -1,7 +1,7 @@
 ---
 name: agent-token-saver-skill-router
 description: Use when an agent has many skills/tools/prompts and must cut prompt tokens by routing adaptively. Keeps one tiny router hot, discovers candidate skills cheaply, lazy-loads only the smallest useful set, and benchmarks savings across Hermes, Claude Code, Codex CLI, OpenCode, Cursor, Windsurf, and repo-local agents.
-version: 1.0.4
+version: 1.0.6
 author: Supersynergy
 license: MIT
 metadata:
@@ -44,9 +44,12 @@ Default load budget:
 | Simple | 0-1 |
 | Normal implementation/debug | 1-3 |
 | Production/security/release | 2-4 |
-| Maximum | 5 |
+| Broad controller stack | 4-10 |
 
 Stop loading once the next concrete action is clear.
+
+`10` is a hard ceiling, not a default. Keep 1-3 skills active in a worker;
+the controller may reserve the remainder for a distinct phase or blocker.
 
 ## Universal Discovery Order
 
@@ -86,6 +89,8 @@ Common roots:
    - 1 = maybe useful later
    - 0 = skip
    - User favorites win close calls; generic tokens (matching many skills) are down-weighted.
+   - Frontmatter tags participate in scoring; for debugging/testing work, skills
+     under `software-development` outrank unrelated domain tutorials.
 5. **Select** the smallest set:
    - 1 primary workflow skill
    - 0-2 domain boosters
@@ -94,6 +99,20 @@ Common roots:
 6. **Load** only selected skills.
 7. **Execute** with tools.
 8. **Benchmark** token savings when changing router behavior.
+
+## Stacks, Subagents, and Processes
+
+- Default: `route "<task>"` returns at most 3 active skills.
+- Broad task: `route "<task>" --max 10` permits an explicit 10-skill manifest.
+- Controller: load the first 1-3 skills needed for its next decision. Hand a
+  subagent only its own 1-3 paths plus a compact task contract; do not forward
+  the controller's full stack or raw catalog.
+- Reserve the remaining paths for phase changes (for example implementation →
+  release → security review). Load a reserve skill only when it changes the
+  next action.
+- Explicit `$skill-name` references retain their order and can fill all 10
+  slots. Fuzzy results remain a shortlist, not an instruction to read ten
+  bodies immediately.
 
 ## CLI Helper
 
@@ -199,6 +218,7 @@ Report:
 - [ ] Router is the only hot skill/catalog entry.
 - [ ] Full skills remain loadable on demand.
 - [ ] `bench` shows before/after token counts.
-- [ ] No more than 3 skills are loaded for normal tasks.
+- [ ] No more than 3 skills are loaded per normal task or subagent.
+- [ ] Broad controller stacks use at most 10 paths and lazy-load by phase.
 - [ ] Production/security/release tasks still load verification/safety skills.
 - [ ] New session/restart confirms prompt-size reduction.

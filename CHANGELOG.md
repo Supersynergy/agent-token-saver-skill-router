@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.6 — 2026-07-13
+
+- Fixed live pytest/debug routing: scanner now includes frontmatter tags, normalizes common test/debug inflections, and uses additive coverage rather than an explosive multiplier.
+- Demoted generic `builder` noise and added a regression fixture proving Python/testing skills beat unrelated builder and Node-debugger skills.
+
+## 1.0.5 — 2026-07-13
+
+- Raised the explicit stack ceiling from 5 to 10 (`route` and `bench`), while retaining a 3-skill default and enforcing the ceiling inside the Python API as well as the CLI.
+- Documented staged controller stacks: keep 1-3 skills active per worker/subagent and reserve the rest for distinct phases or blockers; never broadcast a 10-skill body bundle.
+- Added a regression test for ordered explicit 10-skill stacks and out-of-range clamping.
+
 ## 1.0.4 — 2026-07-12
 
 - Fixed routing regression: a skill matching several intent tokens now outranks a skill that hit one lucky rare name token (coverage multiplier in `score`; red/green regression test added).

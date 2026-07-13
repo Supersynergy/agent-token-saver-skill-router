@@ -4,7 +4,7 @@
 
 `agent-token-saver-skill-router` is a universal skill router for Hermes, Claude Code, Codex CLI, GG Coder, OpenCode, Cursor, Windsurf, and repo-local agents. It stops the most common skill-system tax: dumping every `SKILL.md` into every prompt before the agent knows what it needs.
 
-Instead, your agent starts with one small routing skill, scans cheap metadata, and lazy-loads only the 0–3 skills that materially improve the current task.
+Instead, your agent starts with one small routing skill, scans cheap metadata, and lazy-loads only the 0–3 skills that materially improve the current task. Broad controller workflows may keep a manifest of up to 10 skills, but still read them by phase.
 
 Repo: https://github.com/Supersynergy/agent-token-saver-skill-router
 
@@ -106,7 +106,8 @@ Default policy:
 
 - keep exactly **one** router skill hot
 - load **0–3** skills normally
-- allow **5 max** when the task is broad
+- allow a **10-path ceiling** only for broad controller stacks
+- give each subagent/process only its own **1–3 active skills**
 - use tools for cheap facts
 - use skills only when procedure changes execution
 - preserve prompt-cache stability
@@ -145,6 +146,7 @@ No package manager. No npm. No node_modules. No Cargo build. No venv.
 ```bash
 python3 scripts/agent_token_saver.py route "debug failing pytest in Hermes prompt builder"
 python3 scripts/agent_token_saver.py bench "debug failing pytest in Hermes prompt builder"
+python3 scripts/agent_token_saver.py route "release with security review and rollback" --max 10
 python3 scripts/agent_token_saver.py scan --json
 ```
 
