@@ -12,10 +12,10 @@ Given a task intent and local skill roots, the router returns:
 2. a visible router block,
 3. a benchmark comparing full-catalog vs router-token estimates.
 
-The default selected set is at most 3. The CLI permits up to 10 paths via
-`--max 10` for a broad controller stack; 10 is a hard ceiling. A controller
-loads skills lazily by phase and gives each subagent only its own 1-3 active
-skill paths, never the whole stack by default.
+The automatic selected set is zero or one primary skill. The CLI permits up to
+10 cold paths via explicit `--max 10` for a broad controller manifest; 10 is a
+hard ceiling. A controller loads one skill per phase and gives each subagent
+only its own primary skill path, never the whole manifest.
 
 ## Supported agents
 

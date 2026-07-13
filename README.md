@@ -1,10 +1,14 @@
 # Save Your Skill Tokens
 
-**Keep one tiny router hot. Load the right skill only when it actually helps.**
+**Route outside model context. Load zero or one skill only when it helps.**
 
 `agent-token-saver-skill-router` is a universal skill router for Hermes, Claude Code, Codex CLI, GG Coder, OpenCode, Cursor, Windsurf, and repo-local agents. It stops the most common skill-system tax: dumping every `SKILL.md` into every prompt before the agent knows what it needs.
 
-Instead, your agent starts with one small routing skill, scans cheap metadata, and lazy-loads only the 0–3 skills that materially improve the current task. Broad controller workflows may keep a manifest of up to 10 skills, but still read them by phase.
+On hook-capable hosts, routing runs outside model context and injects only the
+single winning skill pointer. On other hosts, keep one tiny router hot. A
+canonical disk index keeps every other skill cold and dynamically resolvable.
+Explicit multi-phase workflows may request more paths, but still read one phase
+at a time.
 
 Repo: https://github.com/Supersynergy/agent-token-saver-skill-router
 
@@ -70,15 +74,16 @@ Measured on Maxim's Hermes profile, 2026-07-09:
 
 ### Universal local skill-library benchmark
 
-Measured with 458 installed skills (2026-07-12):
+Measured with 459 installed skills (2026-07-13):
 
 | Mode | Chars | Est. tokens (`chars/4`) |
 |---|---:|---:|
-| Full skill catalog | 148,323 | 37,080 |
-| Router result | 908 | 227 |
-| Saved | 147,415 | 36,853 |
+| Full skill catalog | 148,308 | 37,077 |
+| Router result | 357 | 89 |
+| Saved | 147,951 | 36,988 |
 
-**Reduction: 99.39% of the routed skill context.**
+**Reduction: 99.76% of the routed skill context.** Warm index routing averaged
+48.1 ms over 30 runs; forced rebuild averaged 111.9 ms over 10 runs.
 
 > Token estimate uses `chars / 4`. It is intentionally simple, transparent, and model-agnostic.
 
@@ -98,21 +103,22 @@ third-party numbers are the proof asset this project wants most.
 
 ## What it does
 
-1. Scans common skill folders.
-2. Reads only frontmatter metadata first.
+1. Reuses a five-minute canonical metadata index when fresh.
+2. Streams only bounded `SKILL.md` frontmatter when rebuilding it.
 3. Scores skills against the current intent.
-4. Selects the smallest useful set.
-5. Prints a tiny router block.
-6. Lets the agent lazy-load those skills with its native loader.
-7. Benchmarks full-catalog vs router-only cost.
+4. Returns zero on trivial/ambiguous work, otherwise one winner by default.
+5. Lets the agent read only that winning `SKILL.md`.
+6. Benchmarks full-catalog vs routed context.
 
 Default policy:
 
-- keep exactly **one** router skill hot
-- load **0–3** skills normally
-- automatic hooks use `--strict --max 1`; ambiguous routes return **zero**
+- hook-capable hosts keep the router **outside model context**
+- hosts without hooks keep exactly **one** tiny router hot
+- load **0–1** skills automatically
+- ambiguous routes return **zero**
+- keep legacy in-context skill managers explicit-only to avoid router recursion
 - allow a **10-path ceiling** only for broad controller stacks
-- give each subagent/process only its own **1–3 active skills**
+- give each subagent/process only its own **one primary skill** by default
 - use tools for cheap facts
 - use skills only when procedure changes execution
 - preserve prompt-cache stability
@@ -149,20 +155,44 @@ Repo-local:  .agents/skills/agent-token-saver-skill-router/SKILL.md
 No package manager. No npm. No node_modules. No Cargo build. No venv.
 
 ```bash
-python3 scripts/agent_token_saver.py route "debug failing pytest in Hermes prompt builder"
-agent-skill-route route "optimize token context" --strict --max 1
-python3 scripts/agent_token_saver.py bench "debug failing pytest in Hermes prompt builder"
-python3 scripts/agent_token_saver.py route "release with security review and rollback" --max 10
-python3 scripts/agent_token_saver.py scan --json
+si index --refresh
+si route "debug failing pytest in Hermes prompt builder" --strict --json
+si find "pytest debug" --limit 5
+si resolve python-debugpy
+si bench "debug failing pytest in Hermes prompt builder"
+si route '$security-hardening $release-excellence' --max 2
 ```
+
+`si` and `agent-skill-route` are the same stdlib CLI. The installer creates
+`si` only when that command is free or already belongs to this router.
 
 Tested with:
 
 ```text
-Python 3.14.4
+Python 3.14.6
 ```
 
-### 3. Supports folder skills and flat GG Coder skills
+### 3. Canonical cold index
+
+```text
+~/.cache/agent-token-saver/skills-index.json
+~/.cache/agent-token-saver/skills.idx
+```
+
+The JSON file is the machine-readable cache. The TSV file is the grep-friendly
+index (`name`, `description`, `path`). Cache TTL defaults to 300 seconds.
+
+```bash
+si index                  # reuse if fresh
+si index --refresh        # after installing/editing skills
+si find "privacy report"  # candidates, no skill body loaded
+si resolve dsgvo-shield   # exact path only
+```
+
+Overrides: `AGENT_SKILL_INDEX`, `AGENT_SKILL_INDEX_TSV`, and
+`AGENT_SKILL_INDEX_TTL`.
+
+### 4. Supports folder skills and flat GG Coder skills
 
 Recognizes:
 
@@ -173,22 +203,21 @@ agent-token-saver-skill-router.md
 
 That matters because not every agent stores skills the same way.
 
-### 4. Transparent routing output
+### 5. Transparent routing output
 
 Example:
 
 ```text
 router: agent-token-saver-skill-router
 intent: debug failing pytest in Hermes prompt builder
-scanned: 417
+scanned: 459
 load:
-- hermes-agent: Configure, extend, or contribute to Hermes Agent. (.../SKILL.md)
-- ad-hoc-verification: Use when code was changed but no canonical test command is available. (.../SKILL.md)
+- python-debugpy: Debug Python programs and failing test runs. (.../SKILL.md)
 ```
 
-No hidden magic. The agent sees the shortlist and loads only what helps.
+No hidden magic. Automatic routing returns at most one primary skill.
 
-### 5. Built-in proof
+### 6. Built-in proof
 
 Run:
 
@@ -200,11 +229,11 @@ You get:
 
 ```json
 {
-  "skills_scanned": 458,
-  "full_est_tokens": 37080,
-  "router_est_tokens": 227,
-  "saved_est_tokens": 36853,
-  "reduction_pct": 99.39
+  "skills_scanned": 459,
+  "full_est_tokens": 37077,
+  "router_est_tokens": 89,
+  "saved_est_tokens": 36988,
+  "reduction_pct": 99.76
 }
 ```
 
@@ -232,7 +261,8 @@ Or use the Python helper directly:
 python3 scripts/agent_token_saver.py install --target all
 ```
 
-Every target also receives `~/.local/bin/agent-skill-route`, including GG Coder.
+Every target also receives `~/.local/bin/agent-skill-route`. If `si` is free,
+it also receives the shorter `~/.local/bin/si` entrypoint.
 
 Dry-run first:
 
@@ -275,9 +305,9 @@ Hot means paid for on every request.
 Put the skill where your agent expects skills, then use this policy:
 
 ```text
-Start with agent-token-saver-skill-router.
-Scan skill metadata cheaply.
-Load only the 0–3 skills that materially help this task.
+Run the router outside model context when hooks are available.
+Use the canonical metadata index.
+Load zero or one primary skill automatically.
 Use tools for cheap facts.
 Do not load the full skill catalog into the prompt.
 ```
@@ -384,7 +414,9 @@ It uses `chars / 4` as a stable estimate. The point is not exact billing. The po
 
 ### Will this work with thousands of skills?
 
-Yes for metadata-first routing. For very large libraries, add a cached index later. Keep the hot prompt unchanged.
+Yes. Routes reuse the canonical disk index for 300 seconds by default. Rebuild
+with `si index --refresh` after large skill changes; keep the hot prompt
+unchanged.
 
 ---
 

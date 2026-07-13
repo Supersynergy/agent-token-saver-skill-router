@@ -12,12 +12,18 @@ import json
 import os
 import re
 import shutil
+import time
 from collections import Counter
 from dataclasses import asdict, dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Iterable
 
 SKILL_NAME = "agent-token-saver-skill-router"
+# Legacy in-context controllers may call this router again and recursively load
+# more skills. Keep them explicit-only; normal fuzzy routing selects a domain
+# skill directly.
+AUTO_ROUTE_EXCLUDED = {SKILL_NAME, "just-in-time-skill-router", "sm"}
 ROOT = Path(__file__).resolve().parents[1]
 ROOT_SKILL = ROOT / "SKILL.md"
 WORD_RE = re.compile(r"[a-zA-Z0-9+]{2,}")
@@ -139,10 +145,12 @@ NOISE_NAME_RE = re.compile(
 )
 FLAT_SKILL_SKIP = {"readme.md", "changelog.md", "license.md", "contributing.md"}
 DEFAULT_FAVORITE_BOOST = 6
-DEFAULT_MAX_SELECTED = 3
+DEFAULT_MAX_SELECTED = 1
 MAX_SELECTED = 10
 MIN_STRICT_SCORE = 8
 MIN_STRICT_MARGIN = 3
+INDEX_SCHEMA = 1
+DEFAULT_INDEX_TTL_SECONDS = 300.0
 
 
 @dataclass(frozen=True)
@@ -161,9 +169,19 @@ class RouteResult:
     scanned: int
     roots: list[str]
     router_block: str
+    catalog_source: str = "scan"
 
 
-def words(text: str) -> set[str]:
+@dataclass(frozen=True)
+class Catalog:
+    skills: list[Skill]
+    roots: list[Path]
+    source: str
+    index_path: Path
+
+
+@lru_cache(maxsize=8192)
+def words(text: str) -> frozenset[str]:
     tokens: set[str] = set()
     for raw in WORD_RE.findall(text or ""):
         lowered = raw.lower()
@@ -172,7 +190,7 @@ def words(text: str) -> set[str]:
         tokens.add(TOKEN_NORMALIZATION.get(lowered, lowered))
         if lowered == "pytest":
             tokens.add("python")
-    return tokens
+    return frozenset(tokens)
 
 
 def favorites_file() -> Path:
@@ -214,13 +232,21 @@ def selection_limit(value: int) -> int:
 
 
 def parse_frontmatter(path: Path) -> tuple[str, str, str]:
-    text = path.read_text(encoding="utf-8", errors="ignore")
-    if not text.startswith("---"):
-        return path.parent.name, "", ""
-    end = text.find("\n---", 3)
-    if end == -1:
-        return path.parent.name, "", ""
-    fm = text[3:end]
+    with path.open(encoding="utf-8", errors="ignore") as handle:
+        if handle.readline().strip() != "---":
+            return path.parent.name, "", ""
+        frontmatter: list[str] = []
+        size = 0
+        for line in handle:
+            if line.rstrip("\r\n") == "---":
+                break
+            size += len(line)
+            if size > 65_536:
+                return path.parent.name, "", ""
+            frontmatter.append(line)
+        else:
+            return path.parent.name, "", ""
+    fm = "".join(frontmatter)
     name = ""
     desc = ""
     tags = ""
@@ -251,7 +277,8 @@ def looks_like_flat_skill(path: Path) -> bool:
     if NOISE_NAME_RE.search(path.stem):
         return False
     try:
-        start = path.read_text(encoding="utf-8", errors="ignore")[:512]
+        with path.open(encoding="utf-8", errors="ignore") as handle:
+            start = handle.read(512)
     except OSError:
         return False
     return start.startswith("---") and "\nname:" in start
@@ -293,12 +320,36 @@ def common_roots(cwd: Path | None = None) -> list[Path]:
     return out
 
 
+def skill_index_file() -> Path:
+    override = os.getenv("AGENT_SKILL_INDEX", "").strip()
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".cache" / "agent-token-saver" / "skills-index.json"
+
+
+def skill_index_tsv_file(index_path: Path | None = None) -> Path:
+    override = os.getenv("AGENT_SKILL_INDEX_TSV", "").strip()
+    if override:
+        return Path(override).expanduser()
+    return (index_path or skill_index_file()).with_name("skills.idx")
+
+
+def skill_index_ttl_seconds() -> float:
+    raw = os.getenv("AGENT_SKILL_INDEX_TTL", "").strip()
+    if not raw:
+        return DEFAULT_INDEX_TTL_SECONDS
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return DEFAULT_INDEX_TTL_SECONDS
+
+
 def iter_skill_files(root: Path, max_files: int) -> Iterable[Path]:
     count = 0
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [
+        dirnames[:] = sorted(
             d for d in dirnames if d not in EXCLUDE_DIRS and not NOISE_NAME_RE.search(d)
-        ]
+        )
         if "SKILL.md" in filenames:
             yield Path(dirpath) / "SKILL.md"
             count += 1
@@ -342,6 +393,102 @@ def scan(
     return skills
 
 
+def atomic_write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(text, encoding="utf-8")
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def write_skill_index(
+    skills: list[Skill], roots: list[Path], path: Path | None = None
+) -> None:
+    path = path or skill_index_file()
+    payload = {
+        "schema": INDEX_SCHEMA,
+        "generated_at": time.time(),
+        "roots": [str(root) for root in roots],
+        "skills": [asdict(skill) for skill in skills],
+    }
+    atomic_write_text(
+        path,
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n",
+    )
+    rows = []
+    for skill in sorted(skills, key=lambda item: item.name.lower()):
+        fields = (
+            skill.name.replace("\t", " ").replace("\n", " "),
+            skill.description.replace("\t", " ").replace("\n", " "),
+            skill.path.replace("\t", " ").replace("\n", " "),
+        )
+        rows.append("\t".join(fields))
+    atomic_write_text(
+        skill_index_tsv_file(path), "\n".join(rows) + ("\n" if rows else "")
+    )
+
+
+def read_skill_index(
+    roots: list[Path], path: Path | None = None, ttl_seconds: float | None = None
+) -> list[Skill] | None:
+    path = path or skill_index_file()
+    ttl_seconds = skill_index_ttl_seconds() if ttl_seconds is None else ttl_seconds
+    try:
+        if time.time() - path.stat().st_mtime > ttl_seconds:
+            return None
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    raw_skills = payload.get("skills")
+    if payload.get("schema") != INDEX_SCHEMA:
+        return None
+    if payload.get("roots") != [str(root) for root in roots]:
+        return None
+    if not isinstance(raw_skills, list) or not all(
+        isinstance(item, dict) and {"name", "path", "root"} <= item.keys()
+        for item in raw_skills
+    ):
+        return None
+    return [
+        Skill(
+            name=str(item["name"]),
+            description=str(item.get("description", "")),
+            keywords=str(item.get("keywords", "")),
+            path=str(item["path"]),
+            root=str(item["root"]),
+        )
+        for item in raw_skills
+    ]
+
+
+def load_catalog(
+    roots: list[Path] | None = None,
+    *,
+    refresh: bool = False,
+    use_index: bool | None = None,
+) -> Catalog:
+    resolved_roots = list(roots) if roots is not None else common_roots()
+    if use_index is None:
+        use_index = roots is None
+    index_path = skill_index_file()
+    if use_index and not refresh:
+        cached = read_skill_index(resolved_roots, index_path)
+        if cached is not None:
+            return Catalog(cached, resolved_roots, "cache", index_path)
+    skills = scan(resolved_roots)
+    if use_index:
+        try:
+            write_skill_index(skills, resolved_roots, index_path)
+            source = "rebuilt"
+        except OSError:
+            source = "scan"
+    else:
+        source = "scan"
+    return Catalog(skills, resolved_roots, source, index_path)
+
+
 def doc_frequencies(skills: list[Skill]) -> Counter:
     df: Counter = Counter()
     for skill in skills:
@@ -364,6 +511,24 @@ def rarity(token: str, doc_freq: Counter | None) -> float:
     if df <= 8:
         return 0.5
     return 0.25
+
+
+def contains_bounded_phrase(text: str, phrase: str) -> bool:
+    start = 0
+    while True:
+        index = text.find(phrase, start)
+        if index < 0:
+            return False
+        end = index + len(phrase)
+        before_ok = index == 0 or not (
+            text[index - 1].isalnum() or text[index - 1] in "_+-"
+        )
+        after_ok = end == len(text) or not (
+            text[end].isalnum() or text[end] in "_+-"
+        )
+        if before_ok and after_ok:
+            return True
+        start = index + 1
 
 
 def score(
@@ -391,13 +556,11 @@ def score(
     if len(matched) > 1:
         s += 4 * (len(matched) - 1)
     lowered = intent.lower()
-    skill_phrase = re.escape(skill.name.lower())
+    skill_phrase = skill.name.lower()
     # A generic one-word platform name such as "codex" is usually context,
     # not an explicit request to delegate to that skill. Bare names and
     # `$skill` are already resolved exactly in route().
-    if "-" in skill.name and re.search(
-        rf"(?<![a-z0-9_+-]){skill_phrase}(?![a-z0-9_+-])", lowered
-    ):
+    if "-" in skill.name and contains_bounded_phrase(lowered, skill_phrase):
         s += 20
     for token in iw:
         if token in skill.path.lower():
@@ -441,9 +604,13 @@ def route(
     max_selected: int = DEFAULT_MAX_SELECTED,
     roots: list[Path] | None = None,
     strict: bool = False,
+    refresh_index: bool = False,
+    catalog_data: Catalog | None = None,
 ) -> RouteResult:
     max_selected = selection_limit(max_selected)
-    skills = scan(roots)
+    catalog_data = catalog_data or load_catalog(roots, refresh=refresh_index)
+    skills = catalog_data.skills
+    root_paths = catalog_data.roots
     favorites = load_favorites()
     by_name = {
         skill.name.lower(): skill for skill in skills if skill.name != SKILL_NAME
@@ -460,33 +627,37 @@ def route(
                 selected.append(skill)
         selected = selected[:max_selected]
         block = render_router_block(
-            intent, selected, len(skills), roots or common_roots(), favorites
+            intent, selected, len(skills), root_paths, favorites
         )
         return RouteResult(
             intent=intent,
             selected=selected,
             scanned=len(skills),
-            roots=[str(p) for p in (roots or common_roots())],
+            roots=[str(p) for p in root_paths],
             router_block=block,
+            catalog_source=catalog_data.source,
         )
     intent_words = words(intent)
     if not (intent_words & WORKFLOW_TOKENS):
         block = render_router_block(
-            intent, [], len(skills), roots or common_roots(), favorites
+            intent, [], len(skills), root_paths, favorites
         )
         return RouteResult(
             intent=intent,
             selected=[],
             scanned=len(skills),
-            roots=[str(p) for p in (roots or common_roots())],
+            roots=[str(p) for p in root_paths],
             router_block=block,
+            catalog_source=catalog_data.source,
         )
-    doc_freq = doc_frequencies(skills)
+    routable_skills = [
+        skill for skill in skills if skill.name not in AUTO_ROUTE_EXCLUDED
+    ]
+    doc_freq = doc_frequencies(routable_skills)
     ranked = sorted(
         (
             (score(intent, s, doc_freq, favorites), s)
-            for s in skills
-            if s.name != SKILL_NAME
+            for s in routable_skills
         ),
         key=lambda x: (
             -x[0],
@@ -517,14 +688,15 @@ def route(
         skill for points, skill in positive if points >= confidence_floor
     ][:max_selected]
     block = render_router_block(
-        intent, selected, len(skills), roots or common_roots(), favorites
+        intent, selected, len(skills), root_paths, favorites
     )
     return RouteResult(
         intent=intent,
         selected=selected,
         scanned=len(skills),
-        roots=[str(p) for p in (roots or common_roots())],
+        roots=[str(p) for p in root_paths],
         router_block=block,
+        catalog_source=catalog_data.source,
     )
 
 
@@ -550,10 +722,14 @@ def full_catalog_text(skills: list[Skill]) -> str:
     return "\n".join(f"- {s.name}: {s.description}" for s in skills)
 
 
-def bench(intent: str, max_selected: int = DEFAULT_MAX_SELECTED) -> dict[str, object]:
-    roots = common_roots()
-    skills = scan(roots)
-    rr = route(intent, max_selected=max_selected, roots=roots)
+def bench(
+    intent: str,
+    max_selected: int = DEFAULT_MAX_SELECTED,
+    refresh_index: bool = False,
+) -> dict[str, object]:
+    catalog_data = load_catalog(refresh=refresh_index)
+    skills = catalog_data.skills
+    rr = route(intent, max_selected=max_selected, catalog_data=catalog_data)
     full = full_catalog_text(skills)
     router = rr.router_block
     full_tokens = estimate_tokens(full)
@@ -562,6 +738,8 @@ def bench(intent: str, max_selected: int = DEFAULT_MAX_SELECTED) -> dict[str, ob
     pct = round((saved / full_tokens * 100), 2) if full_tokens else 0.0
     return {
         "intent": intent,
+        "catalog_source": catalog_data.source,
+        "index_path": str(catalog_data.index_path),
         "skills_scanned": len(skills),
         "full_chars": len(full),
         "full_est_tokens": full_tokens,
@@ -571,6 +749,57 @@ def bench(intent: str, max_selected: int = DEFAULT_MAX_SELECTED) -> dict[str, ob
         "reduction_pct": pct,
         "selected": [asdict(s) for s in rr.selected],
     }
+
+
+def find_skills(
+    query: str, skills: list[Skill], limit: int = 8
+) -> list[tuple[int, Skill]]:
+    limit = max(1, min(limit, 50))
+    normalized = query.strip().lstrip("$").lower()
+    frequencies = doc_frequencies(skills)
+    ranked: list[tuple[int, Skill]] = []
+    for skill in skills:
+        if skill.name == SKILL_NAME:
+            continue
+        points = score(query, skill, frequencies)
+        if skill.name.lower() == normalized:
+            points += 1000
+        elif normalized and normalized in skill.name.lower():
+            points += 20
+        if points > 0:
+            ranked.append((points, skill))
+    return sorted(ranked, key=lambda item: (-item[0], item[1].name.lower()))[:limit]
+
+
+def resolve_skill(name: str, skills: list[Skill]) -> Skill | None:
+    normalized = name.strip().lstrip("$").lower()
+    return next((skill for skill in skills if skill.name.lower() == normalized), None)
+
+
+def catalog_summary(catalog_data: Catalog) -> dict[str, object]:
+    return {
+        "status": catalog_data.source,
+        "skills": len(catalog_data.skills),
+        "roots": [str(root) for root in catalog_data.roots],
+        "index_path": str(catalog_data.index_path),
+        "tsv_path": str(skill_index_tsv_file(catalog_data.index_path)),
+        "ttl_seconds": skill_index_ttl_seconds(),
+    }
+
+
+def source_skill_file() -> Path:
+    home = Path.home()
+    candidates = [
+        ROOT_SKILL,
+        home / ".codex" / "skills" / SKILL_NAME / "SKILL.md",
+        home / ".claude" / "skills" / SKILL_NAME / "SKILL.md",
+        home / ".hermes" / "skills" / "metaskills" / SKILL_NAME / "SKILL.md",
+        home / ".gg" / "skills" / f"{SKILL_NAME}.md",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    raise SystemExit("router SKILL.md source not found")
 
 
 def install(target: str, dry_run: bool = False) -> list[str]:
@@ -584,6 +813,8 @@ def install(target: str, dry_run: bool = False) -> list[str]:
         "repo": Path.cwd() / ".agents" / "skills" / SKILL_NAME / "SKILL.md",
     }
     names = list(targets) if target == "all" else [target]
+    skill_src = source_skill_file()
+    script_src = Path(__file__).resolve()
     written: list[str] = []
     for name in names:
         if name not in targets:
@@ -595,18 +826,30 @@ def install(target: str, dry_run: bool = False) -> list[str]:
         if dry_run:
             continue
         dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(ROOT_SKILL, dest)
-        script_src = ROOT / "scripts" / "agent_token_saver.py"
+        if skill_src.resolve() != dest.resolve():
+            shutil.copyfile(skill_src, dest)
         if script_src.exists() and dest.name == "SKILL.md":
             script_dest = dest.parent / "scripts" / script_src.name
             script_dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(script_src, script_dest)
-    launcher = home / ".local" / "bin" / "agent-skill-route"
-    written.append(str(launcher))
-    if not dry_run:
-        launcher.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(ROOT / "scripts" / "agent_token_saver.py", launcher)
-        launcher.chmod(0o755)
+            if script_src.resolve() != script_dest.resolve():
+                shutil.copyfile(script_src, script_dest)
+    for launcher_name in ("agent-skill-route", "si"):
+        launcher = home / ".local" / "bin" / launcher_name
+        if launcher_name == "si" and launcher.exists():
+            try:
+                owned = "Adaptive token-saving skill router" in launcher.read_text(
+                    encoding="utf-8", errors="ignore"
+                )[:512]
+            except OSError:
+                owned = False
+            if not owned:
+                continue
+        written.append(str(launcher))
+        if not dry_run:
+            launcher.parent.mkdir(parents=True, exist_ok=True)
+            if script_src.resolve() != launcher.resolve():
+                shutil.copyfile(script_src, launcher)
+            launcher.chmod(0o755)
     return written
 
 
@@ -618,9 +861,11 @@ def main() -> int:
     p_route.add_argument("--max", type=int, default=DEFAULT_MAX_SELECTED)
     p_route.add_argument("--json", action="store_true")
     p_route.add_argument("--strict", action="store_true")
+    p_route.add_argument("--refresh-index", action="store_true")
     p_bench = sub.add_parser("bench")
     p_bench.add_argument("intent")
     p_bench.add_argument("--max", type=int, default=DEFAULT_MAX_SELECTED)
+    p_bench.add_argument("--refresh-index", action="store_true")
     p_install = sub.add_parser("install")
     p_install.add_argument(
         "--target",
@@ -630,6 +875,18 @@ def main() -> int:
     p_install.add_argument("--dry-run", action="store_true")
     p_scan = sub.add_parser("scan")
     p_scan.add_argument("--json", action="store_true")
+    p_index = sub.add_parser("index")
+    p_index.add_argument("--refresh", action="store_true")
+    p_index.add_argument("--json", action="store_true")
+    p_find = sub.add_parser("find")
+    p_find.add_argument("query")
+    p_find.add_argument("--limit", type=int, default=8)
+    p_find.add_argument("--json", action="store_true")
+    p_find.add_argument("--refresh-index", action="store_true")
+    p_resolve = sub.add_parser("resolve")
+    p_resolve.add_argument("name")
+    p_resolve.add_argument("--json", action="store_true")
+    p_resolve.add_argument("--refresh-index", action="store_true")
     args = parser.parse_args()
 
     if args.cmd == "route":
@@ -637,6 +894,7 @@ def main() -> int:
             args.intent,
             max_selected=selection_limit(args.max),
             strict=args.strict,
+            refresh_index=args.refresh_index,
         )
         if args.json:
             print(json.dumps(asdict(rr), indent=2, ensure_ascii=False))
@@ -646,7 +904,11 @@ def main() -> int:
     if args.cmd == "bench":
         print(
             json.dumps(
-                bench(args.intent, max_selected=selection_limit(args.max)),
+                bench(
+                    args.intent,
+                    max_selected=selection_limit(args.max),
+                    refresh_index=args.refresh_index,
+                ),
                 indent=2,
                 ensure_ascii=False,
             )
@@ -670,6 +932,42 @@ def main() -> int:
         else:
             for s in skills:
                 print(f"{s.name}\t{s.description}\t{s.path}")
+        return 0
+    if args.cmd == "index":
+        catalog_data = load_catalog(refresh=args.refresh)
+        summary = catalog_summary(catalog_data)
+        if args.json:
+            print(json.dumps(summary, indent=2, ensure_ascii=False))
+        else:
+            print(
+                f"{summary['status']}\t{summary['skills']} skills\t"
+                f"{summary['index_path']}\t{summary['tsv_path']}"
+            )
+        return 0
+    if args.cmd == "find":
+        catalog_data = load_catalog(refresh=args.refresh_index)
+        matches = find_skills(args.query, catalog_data.skills, args.limit)
+        if args.json:
+            print(
+                json.dumps(
+                    [dict(score=points, **asdict(skill)) for points, skill in matches],
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
+        else:
+            for points, skill in matches:
+                print(f"{points}\t{skill.name}\t{skill.description}\t{skill.path}")
+        return 0 if matches else 1
+    if args.cmd == "resolve":
+        catalog_data = load_catalog(refresh=args.refresh_index)
+        skill = resolve_skill(args.name, catalog_data.skills)
+        if skill is None:
+            return 1
+        if args.json:
+            print(json.dumps(asdict(skill), indent=2, ensure_ascii=False))
+        else:
+            print(skill.path)
         return 0
     return 2
 

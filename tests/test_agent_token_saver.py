@@ -1,5 +1,6 @@
 import importlib.util
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -138,6 +139,32 @@ class AgentTokenSaverTests(unittest.TestCase):
             self.assertEqual(mod.selection_limit(0), 1)
             self.assertEqual(mod.selection_limit(99), 10)
 
+    def test_legacy_meta_routers_are_explicit_only(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(
+                root,
+                "just-in-time-skill-router",
+                "Route and combine skills for debugging failing Python tests.",
+            )
+            write_skill(
+                root,
+                "sm",
+                "Skill manager that routes debugging and failing Python tests.",
+            )
+            write_skill(root, "python-debug", "Debug failing Python tests.")
+
+            automatic = mod.route("debug failing Python tests", roots=[root])
+            explicit = mod.route(
+                "$just-in-time-skill-router $sm", max_selected=2, roots=[root]
+            )
+
+            self.assertEqual([s.name for s in automatic.selected], ["python-debug"])
+            self.assertEqual(
+                [s.name for s in explicit.selected],
+                ["just-in-time-skill-router", "sm"],
+            )
+
     def test_tags_and_normalized_testing_terms_beat_generic_builder(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td) / "skills"
@@ -178,7 +205,11 @@ class AgentTokenSaverTests(unittest.TestCase):
                 "debugging, nodejs",
             )
 
-            result = mod.route("debug failing pytest in Hermes prompt builder", roots=[root])
+            result = mod.route(
+                "debug failing pytest in Hermes prompt builder",
+                max_selected=3,
+                roots=[root],
+            )
 
             self.assertCountEqual(
                 [s.name for s in result.selected],
@@ -214,6 +245,7 @@ class AgentTokenSaverTests(unittest.TestCase):
             ):
                 result = mod.route(
                     "review Python API auth bug for security and regressions",
+                    max_selected=2,
                     roots=[root],
                 )
 
@@ -306,6 +338,74 @@ class AgentTokenSaverTests(unittest.TestCase):
             self.assertGreater(report["full_est_tokens"], 0)
             self.assertGreater(report["router_est_tokens"], 0)
             self.assertEqual(report["selected"][0]["name"], "python-testing")
+
+    def test_default_fuzzy_route_loads_exactly_one_skill(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(root, "python-debug", "Debug failing Python tests.")
+            write_skill(root, "test-workflow", "Test and debug Python code.")
+
+            result = mod.route("debug failing Python tests", roots=[root])
+
+            self.assertEqual(len(result.selected), 1)
+
+    def test_index_cache_is_reused_until_refresh(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            root = base / "skills"
+            index = base / "cache" / "skills-index.json"
+            write_skill(root, "python-testing", "First description for Python tests.")
+
+            with patch.dict(
+                os.environ,
+                {
+                    "AGENT_SKILL_INDEX": str(index),
+                    "AGENT_SKILL_INDEX_TTL": "3600",
+                },
+            ):
+                first = mod.load_catalog([root], use_index=True)
+                (root / "python-testing" / "SKILL.md").write_text(
+                    "---\nname: python-testing\n"
+                    "description: Second description after refresh.\n---\n",
+                    encoding="utf-8",
+                )
+                cached = mod.load_catalog([root], use_index=True)
+                refreshed = mod.load_catalog([root], use_index=True, refresh=True)
+
+            self.assertEqual(first.source, "rebuilt")
+            self.assertEqual(cached.source, "cache")
+            self.assertIn("First description", cached.skills[0].description)
+            self.assertEqual(refreshed.source, "rebuilt")
+            self.assertIn("Second description", refreshed.skills[0].description)
+            self.assertTrue(index.is_file())
+            self.assertTrue((index.parent / "skills.idx").is_file())
+
+    def test_malformed_index_fails_open_and_rebuilds(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            root = base / "skills"
+            index = base / "skills-index.json"
+            write_skill(root, "release-pro", "Release repositories safely.")
+            index.write_text("{broken", encoding="utf-8")
+
+            with patch.dict(os.environ, {"AGENT_SKILL_INDEX": str(index)}):
+                catalog = mod.load_catalog([root], use_index=True)
+
+            self.assertEqual(catalog.source, "rebuilt")
+            self.assertEqual([skill.name for skill in catalog.skills], ["release-pro"])
+
+    def test_find_and_resolve_use_metadata_without_loading_skill_body(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(root, "python-testing", "Debug failing pytest suites.")
+            write_skill(root, "copywriting", "Write sales copy.")
+            skills = mod.scan([root])
+
+            matches = mod.find_skills("pytest debug", skills, limit=1)
+            resolved = mod.resolve_skill("$python-testing", skills)
+
+            self.assertEqual(matches[0][1].name, "python-testing")
+            self.assertEqual(resolved.name, "python-testing")
 
     def test_scan_skips_backup_and_bak_dirs(self):
         with tempfile.TemporaryDirectory() as td:
@@ -431,6 +531,7 @@ class AgentTokenSaverTests(unittest.TestCase):
             self.assertTrue(any(".codex" in p for p in written))
             self.assertTrue(any(".gg" in p for p in written))
             self.assertTrue(any(p.endswith("agent-skill-route") for p in written))
+            self.assertTrue(any(p.endswith("/si") for p in written))
 
     def test_ggcoder_install_also_writes_global_router_cli(self):
         with tempfile.TemporaryDirectory() as td:
@@ -438,9 +539,51 @@ class AgentTokenSaverTests(unittest.TestCase):
                 written = mod.install("ggcoder")
 
             launcher = Path(td) / ".local" / "bin" / "agent-skill-route"
+            indexer = Path(td) / ".local" / "bin" / "si"
             self.assertIn(str(launcher), written)
             self.assertTrue(launcher.is_file())
             self.assertTrue(os.access(launcher, os.X_OK))
+            self.assertIn(str(indexer), written)
+            self.assertTrue(os.access(indexer, os.X_OK))
+
+    def test_install_never_overwrites_an_unrelated_si_command(self):
+        with tempfile.TemporaryDirectory() as td:
+            indexer = Path(td) / ".local" / "bin" / "si"
+            indexer.parent.mkdir(parents=True)
+            indexer.write_text("foreign command\n", encoding="utf-8")
+
+            with patch.dict(os.environ, {"HOME": td}):
+                written = mod.install("ggcoder")
+
+            self.assertNotIn(str(indexer), written)
+            self.assertEqual(indexer.read_text(encoding="utf-8"), "foreign command\n")
+
+    def test_installed_cli_can_install_another_target(self):
+        with tempfile.TemporaryDirectory() as td:
+            env = os.environ.copy()
+            env["HOME"] = td
+            with patch.dict(os.environ, {"HOME": td}):
+                mod.install("ggcoder")
+            launcher = Path(td) / ".local" / "bin" / "agent-skill-route"
+
+            result = subprocess.run(
+                [str(launcher), "install", "--target", "codex"],
+                capture_output=True,
+                text=True,
+                env=env,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(
+                (
+                    Path(td)
+                    / ".codex"
+                    / "skills"
+                    / "agent-token-saver-skill-router"
+                    / "SKILL.md"
+                ).is_file()
+            )
 
 
 if __name__ == "__main__":

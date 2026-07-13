@@ -1,7 +1,7 @@
 ---
 name: agent-token-saver-skill-router
-description: Use when an agent has many skills/tools/prompts and must cut prompt tokens by routing adaptively. Keeps one tiny router hot, discovers candidate skills cheaply, lazy-loads only the smallest useful set, and benchmarks savings across Hermes, Claude Code, Codex CLI, OpenCode, Cursor, Windsurf, and repo-local agents.
-version: 1.1.0
+description: Use when an agent has many skills/tools/prompts and must cut prompt tokens by routing adaptively. Runs routing outside model context when possible, indexes metadata on disk, lazy-loads zero or one primary skill by default, and benchmarks savings across agents.
+version: 1.2.0
 author: Supersynergy
 license: MIT
 metadata:
@@ -14,7 +14,9 @@ metadata:
 
 ## Overview
 
-Use this skill as the always-hot router when the agent can see many skills, tools, prompts, MCP schemas, or command references.
+Run the helper outside model context when the host supports prompt hooks. Load
+this router skill itself only on hosts without that mechanism or when changing
+router behavior.
 
 Goal: keep the system prompt tiny, preserve prefix-cache stability, and load only the skills that actually change the next action.
 
@@ -38,30 +40,32 @@ Do not use for:
 
 ## Operating Rule
 
-Keep one router hot. Load everything else lazily.
+Keep the router out of context when possible. Load everything lazily.
 
 Default load budget:
 
 | Task | Skills to load |
 |---|---:|
-| Simple | 0-1 |
-| Normal implementation/debug | 1-3 |
-| Production/security/release | 2-4 |
-| Broad controller stack | 4-10 |
+| Automatic route | 0-1 |
+| Explicit multi-domain task | one primary; extra paths stay cold until their phase |
+| Production/security/release | one primary skill per phase |
+| Broad controller manifest | 4-10 cold paths |
 
 Stop loading once the next concrete action is clear.
 
-`10` is a hard ceiling, not a default. Keep 1-3 skills active in a worker;
-the controller may reserve the remainder for a distinct phase or blocker.
+`10` is a hard ceiling, not a default. Keep one primary skill active in a
+worker; the controller may reserve cold paths for a distinct phase or blocker.
+Legacy in-context routing controllers are explicit-only so automatic routing
+cannot recurse into another skill loader.
 
 ## Universal Discovery Order
 
 Check the cheapest available source first:
 
-1. Visible hot router metadata.
-2. Local index files (`skills.idx`, `skills-catalog.md`, `.usage.json`).
-3. `SKILL.md` frontmatter only.
-4. Full `SKILL.md` body only for the selected winner(s).
+1. Explicit `$SkillName` from the user.
+2. Canonical cache (`~/.cache/agent-token-saver/skills-index.json`).
+3. Grep-friendly `skills.idx` or bounded `SKILL.md` frontmatter.
+4. Full `SKILL.md` body only for the single selected winner.
 5. External search only if local discovery misses.
 
 Common roots:
@@ -76,6 +80,7 @@ Common roots:
 ~/.claude/cts/skills
 ~/.codex/skills
 ~/.codex/plugins/cache
+~/.gg/skills
 ~/.opencode/skills
 ~/.cursor/skills
 ~/.windsurf/skills
@@ -94,21 +99,18 @@ Common roots:
    - User favorites win close calls; generic tokens (matching many skills) are down-weighted.
    - Frontmatter tags participate in scoring; for debugging/testing work, skills
      under `software-development` outrank unrelated domain tutorials.
-5. **Select** the smallest set:
-   - 1 primary workflow skill
-   - 0-2 domain boosters
-   - 0-1 verification/release skill
-   - 0-1 safety/compliance skill when risk exists
-6. **Load** only selected skills.
+5. **Select** zero or one primary workflow skill automatically.
+6. **Load** only that winner. Resolve extra paths only after an explicit phase
+   change, blocker, or user-named stack.
 7. **Execute** with tools.
 8. **Benchmark** token savings when changing router behavior.
 
 ## Stacks, Subagents, and Processes
 
-- Default: `route "<task>"` returns at most 3 active skills.
+- Default: `route "<task>"` returns at most one active skill.
 - Broad task: `route "<task>" --max 10` permits an explicit 10-skill manifest.
-- Controller: load the first 1-3 skills needed for its next decision. Hand a
-  subagent only its own 1-3 paths plus a compact task contract; do not forward
+- Controller: load only the primary skill needed for its next decision. Hand a
+  subagent only its own primary path plus a compact task contract; do not forward
   the controller's full stack or raw catalog.
 - Reserve the remaining paths for phase changes (for example implementation →
   release → security review). Load a reserve skill only when it changes the
@@ -122,12 +124,16 @@ Common roots:
 If this repo is installed, use the helper:
 
 ```bash
-python3 scripts/agent_token_saver.py route "<task>"
-python3 scripts/agent_token_saver.py bench "<task>"
-python3 scripts/agent_token_saver.py install --target all
+si index --refresh
+si route "<task>" --strict --json
+si find "<keywords>" --limit 8
+si resolve <exact-skill-name>
+si bench "<task>"
 ```
 
-No dependencies. Python stdlib only.
+`si` and `agent-skill-route` are identical entrypoints. No dependencies.
+Python stdlib only. The cache TTL defaults to 300 seconds; rebuild after skill
+installs or frontmatter edits.
 
 ## Favorites & Noise Filter
 
@@ -218,10 +224,10 @@ Report:
 
 ## Verification Checklist
 
-- [ ] Router is the only hot skill/catalog entry.
+- [ ] Router runs outside model context when hooks are available.
 - [ ] Full skills remain loadable on demand.
 - [ ] `bench` shows before/after token counts.
-- [ ] No more than 3 skills are loaded per normal task or subagent.
+- [ ] No more than one skill is auto-loaded per normal task or subagent.
 - [ ] Broad controller stacks use at most 10 paths and lazy-load by phase.
-- [ ] Production/security/release tasks still load verification/safety skills.
+- [ ] Production/security/release phase changes still route to the right gate skill.
 - [ ] New session/restart confirms prompt-size reduction.

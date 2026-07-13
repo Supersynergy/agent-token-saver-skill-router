@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.0 — 2026-07-13
+
+- Changed automatic routing from three candidates to zero or one primary skill.
+- Added a canonical JSON cache plus grep-friendly `skills.idx`, with a 300-second TTL and atomic rebuilds.
+- Added `si index`, `si find`, and `si resolve`; preserved unrelated existing `si` commands.
+- Streamed bounded frontmatter instead of reading complete skill bodies during discovery.
+- Replaced per-skill regex compilation with a bounded string matcher and cached tokenization.
+- Reused one catalog snapshot inside `bench` instead of scanning twice.
+- Made legacy in-context skill controllers explicit-only to prevent recursive multi-skill routing.
+- Changed the Codex prompt hook to parse structured JSON and inject only one compact skill pointer.
+
 ## 1.1.0 — 2026-07-13
 
 - Split hyphenated metadata into meaningful routing tokens.
