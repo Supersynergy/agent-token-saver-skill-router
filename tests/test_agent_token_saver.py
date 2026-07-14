@@ -50,6 +50,29 @@ class AgentTokenSaverTests(unittest.TestCase):
             self.assertEqual([s.name for s in result.selected], ["python-testing"])
             self.assertIn("python-testing", result.router_block)
 
+    def test_reduce_save_trim_verbs_pass_the_workflow_gate(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(
+                root,
+                "token-saver",
+                "Reduce tokens and save context by trimming large logs before "
+                "they reach the model.",
+                tags="tokens, context, log",
+            )
+            write_skill(root, "copywriting", "Use when writing sales copy.")
+
+            for intent in (
+                "reduce tokens for a large log file",
+                "save context by trimming this log",
+            ):
+                result = mod.route(intent, roots=[root])
+                self.assertEqual(
+                    [s.name for s in result.selected],
+                    ["token-saver"],
+                    msg=f"intent={intent!r}",
+                )
+
     def test_simple_factual_or_arithmetic_prompt_loads_no_skill(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td) / "skills"
@@ -68,7 +91,9 @@ class AgentTokenSaverTests(unittest.TestCase):
             write_skill(root, "release-a", "Review and release a repository.")
             write_skill(root, "release-b", "Review and release a repository.")
 
-            result = mod.route("review and release this repo", roots=[root], strict=True)
+            result = mod.route(
+                "review and release this repo", roots=[root], strict=True
+            )
 
             self.assertEqual(result.selected, [])
 
@@ -165,6 +190,21 @@ class AgentTokenSaverTests(unittest.TestCase):
                 ["just-in-time-skill-router", "sm"],
             )
 
+    def test_context_mode_is_explicit_only_for_automatic_routes(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(
+                root,
+                "context-mode",
+                "Use context-mode tools instead of Bash when running tests and "
+                "processing large command output.",
+            )
+            automatic = mod.route("test output and inspect this change", roots=[root])
+            explicit = mod.route("$context-mode", roots=[root])
+
+            self.assertEqual(automatic.selected, [])
+            self.assertEqual([skill.name for skill in explicit.selected], ["context-mode"])
+
     def test_tags_and_normalized_testing_terms_beat_generic_builder(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td) / "skills"
@@ -240,9 +280,7 @@ class AgentTokenSaverTests(unittest.TestCase):
             favorites = Path(td) / "favorites.txt"
             favorites.write_text("superweb=8\n", encoding="utf-8")
 
-            with patch.dict(
-                os.environ, {"AGENT_SKILL_FAVORITES_FILE": str(favorites)}
-            ):
+            with patch.dict(os.environ, {"AGENT_SKILL_FAVORITES_FILE": str(favorites)}):
                 result = mod.route(
                     "review Python API auth bug for security and regressions",
                     max_selected=2,

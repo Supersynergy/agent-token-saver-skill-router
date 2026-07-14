@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.1 — 2026-07-14
+
+- Keep `context-mode` explicit-only during fuzzy routing. Its broad trigger
+  text no longer loads a full heavy-session handbook for ordinary tests or
+  small verification work.
+- Add a regression test for automatic rejection plus exact `$context-mode`
+  resolution.
+
 ## 1.2.0 — 2026-07-13
 
 - Changed automatic routing from three candidates to zero or one primary skill.

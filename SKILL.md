@@ -1,7 +1,7 @@
 ---
 name: agent-token-saver-skill-router
 description: Use when an agent has many skills/tools/prompts and must cut prompt tokens by routing adaptively. Runs routing outside model context when possible, indexes metadata on disk, lazy-loads zero or one primary skill by default, and benchmarks savings across agents.
-version: 1.2.0
+version: 1.2.1
 author: Supersynergy
 license: MIT
 metadata:
@@ -57,6 +57,10 @@ Stop loading once the next concrete action is clear.
 worker; the controller may reserve cold paths for a distinct phase or blocker.
 Legacy in-context routing controllers are explicit-only so automatic routing
 cannot recurse into another skill loader.
+
+`context-mode` is also explicit-only: it is a heavy session layer, not a
+default for ordinary test, log or file tasks. Use `$context-mode` or start a
+dedicated heavy session only after deterministic projection is insufficient.
 
 ## Universal Discovery Order
 

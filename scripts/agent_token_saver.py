@@ -23,7 +23,14 @@ SKILL_NAME = "agent-token-saver-skill-router"
 # Legacy in-context controllers may call this router again and recursively load
 # more skills. Keep them explicit-only; normal fuzzy routing selects a domain
 # skill directly.
-AUTO_ROUTE_EXCLUDED = {SKILL_NAME, "just-in-time-skill-router", "sm"}
+AUTO_ROUTE_EXCLUDED = {
+    SKILL_NAME,
+    "just-in-time-skill-router",
+    "sm",
+    # Context-mode is a deliberate heavy/session layer. Its broad trigger list
+    # must not make ordinary test or log tasks pay to load its full handbook.
+    "context-mode",
+}
 ROOT = Path(__file__).resolve().parents[1]
 ROOT_SKILL = ROOT / "SKILL.md"
 WORD_RE = re.compile(r"[a-zA-Z0-9+]{2,}")
@@ -81,11 +88,26 @@ TOKEN_NORMALIZATION = {
     "tools": "tool",
 }
 PLATFORM_TOKENS = {
-    "python", "node", "nodejs", "javascript", "typescript", "rust", "golang", "go"
+    "python",
+    "node",
+    "nodejs",
+    "javascript",
+    "typescript",
+    "rust",
+    "golang",
+    "go",
 }
 SECURITY_TOKENS = {
-    "auth", "authentication", "authorization", "owasp", "secret", "secrets",
-    "secure", "security", "vulnerability", "vulnerabilities",
+    "auth",
+    "authentication",
+    "authorization",
+    "owasp",
+    "secret",
+    "secrets",
+    "secure",
+    "security",
+    "vulnerability",
+    "vulnerabilities",
 }
 REVIEW_TOKENS = {"audit", "review", "regression", "regressions"}
 TOKEN_CONTEXT_TOKENS = {
@@ -105,7 +127,10 @@ WORKFLOW_TOKENS = {
     "benchmark",
     "build",
     "code",
+    "compress",
+    "condense",
     "create",
+    "cut",
     "debug",
     "deploy",
     "design",
@@ -115,17 +140,22 @@ WORKFLOW_TOKENS = {
     "fix",
     "implement",
     "install",
+    "minimize",
     "optimize",
     "plan",
     "readme",
+    "reduce",
     "refactor",
     "release",
     "research",
     "review",
     "route",
+    "save",
     "scrape",
     "search",
+    "shrink",
     "test",
+    "trim",
     "write",
 }
 EXCLUDE_DIRS = {
@@ -523,9 +553,7 @@ def contains_bounded_phrase(text: str, phrase: str) -> bool:
         before_ok = index == 0 or not (
             text[index - 1].isalnum() or text[index - 1] in "_+-"
         )
-        after_ok = end == len(text) or not (
-            text[end].isalnum() or text[end] in "_+-"
-        )
+        after_ok = end == len(text) or not (text[end].isalnum() or text[end] in "_+-")
         if before_ok and after_ok:
             return True
         start = index + 1
@@ -590,7 +618,11 @@ def score(
         s -= 10
     skill_platforms = (nw | dw | kw) & PLATFORM_TOKENS
     requested_platforms = iw & PLATFORM_TOKENS
-    if skill_platforms and requested_platforms and not (skill_platforms & requested_platforms):
+    if (
+        skill_platforms
+        and requested_platforms
+        and not (skill_platforms & requested_platforms)
+    ):
         s -= 8
     if s > 0 and favorites and ((iw & nw) or (iw & kw)):
         # Cap the boost at the base score: favorites win close calls but a
@@ -639,9 +671,7 @@ def route(
         )
     intent_words = words(intent)
     if not (intent_words & WORKFLOW_TOKENS):
-        block = render_router_block(
-            intent, [], len(skills), root_paths, favorites
-        )
+        block = render_router_block(intent, [], len(skills), root_paths, favorites)
         return RouteResult(
             intent=intent,
             selected=[],
@@ -655,10 +685,7 @@ def route(
     ]
     doc_freq = doc_frequencies(routable_skills)
     ranked = sorted(
-        (
-            (score(intent, s, doc_freq, favorites), s)
-            for s in routable_skills
-        ),
+        ((score(intent, s, doc_freq, favorites), s) for s in routable_skills),
         key=lambda x: (
             -x[0],
             0 if x[1].name.lower() in favorites else 1,
@@ -684,12 +711,10 @@ def route(
         elif len(positive) > 1 and positive[0][0] - positive[1][0] < MIN_STRICT_MARGIN:
             positive = []
     confidence_floor = max(4, round(positive[0][0] * 0.33)) if positive else 0
-    selected = [
-        skill for points, skill in positive if points >= confidence_floor
-    ][:max_selected]
-    block = render_router_block(
-        intent, selected, len(skills), root_paths, favorites
-    )
+    selected = [skill for points, skill in positive if points >= confidence_floor][
+        :max_selected
+    ]
+    block = render_router_block(intent, selected, len(skills), root_paths, favorites)
     return RouteResult(
         intent=intent,
         selected=selected,
@@ -837,9 +862,10 @@ def install(target: str, dry_run: bool = False) -> list[str]:
         launcher = home / ".local" / "bin" / launcher_name
         if launcher_name == "si" and launcher.exists():
             try:
-                owned = "Adaptive token-saving skill router" in launcher.read_text(
-                    encoding="utf-8", errors="ignore"
-                )[:512]
+                owned = (
+                    "Adaptive token-saving skill router"
+                    in launcher.read_text(encoding="utf-8", errors="ignore")[:512]
+                )
             except OSError:
                 owned = False
             if not owned:
