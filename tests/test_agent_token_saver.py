@@ -205,6 +205,21 @@ class AgentTokenSaverTests(unittest.TestCase):
             self.assertEqual(automatic.selected, [])
             self.assertEqual([skill.name for skill in explicit.selected], ["context-mode"])
 
+    def test_plain_test_verification_does_not_load_an_unrelated_debugger(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            software = root / "software-development"
+            write_skill(
+                software,
+                "python-debugpy",
+                "Debug Python programs with pdb and debugpy.",
+                "debugging, python, pdb",
+            )
+
+            result = mod.route("test output and verify this change", roots=[root])
+
+            self.assertEqual(result.selected, [])
+
     def test_tags_and_normalized_testing_terms_beat_generic_builder(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td) / "skills"

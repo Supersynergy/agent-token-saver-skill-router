@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.2 — 2026-07-14
+
+- Stop the software-development test bonus from selecting a debugger for plain
+  test verification. Debug/failure requests retain their relevant boost.
+- Add a regression test for zero-skill plain test verification.
+
 ## 1.2.1 — 2026-07-14
 
 - Keep `context-mode` explicit-only during fuzzy routing. Its broad trigger

@@ -594,13 +594,14 @@ def score(
         if token in skill.path.lower():
             s += 1 * rarity(token, doc_freq)
     is_software_dev = "/software-development/" in skill.path
-    if is_software_dev and iw & {"debug", "test", "fail"}:
+    skill_words = nw | dw | kw
+    test_debug_intent = iw & {"debug", "test", "fail"}
+    if is_software_dev and test_debug_intent & skill_words:
         s += 20
     if is_software_dev and "python" in iw and "python" in (nw | dw | kw):
         s += 12
     # Security review is a closed local-code task. Prefer skills that actually
     # cover security/review; a generic web/API skill must not win on "api".
-    skill_words = nw | dw | kw
     if iw & SECURITY_TOKENS and skill_words & SECURITY_TOKENS:
         s += 20
     if iw & REVIEW_TOKENS and skill_words & (SECURITY_TOKENS | REVIEW_TOKENS):
