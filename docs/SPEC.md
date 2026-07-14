@@ -17,6 +17,12 @@ The automatic selected set is zero or one primary skill. The CLI permits up to
 hard ceiling. A controller loads one skill per phase and gives each subagent
 only its own primary skill path, never the whole manifest.
 
+For an agent team, a controller starts with zero workers and spawns at most
+three independent lanes only when each has a closed machine oracle. A worker
+gets a 300–700-token evidence-by-reference capsule, one primary skill at most,
+three tries at most and a <=500-token result. The accounting scope is parent,
+children, retries, fallbacks and compactions together.
+
 ## Supported agents
 
 - Hermes

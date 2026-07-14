@@ -118,7 +118,6 @@ TOKEN_CONTEXT_TOKENS = {
     "saving",
     "skill",
     "stack",
-    "synapse",
     "token",
 }
 WORKFLOW_TOKENS = {
@@ -615,8 +614,6 @@ def score(
             s += 12
         elif domain_coverage == 0:
             s -= 12
-    if "synapse" in iw and "synapse" not in skill_words:
-        s -= 10
     skill_platforms = (nw | dw | kw) & PLATFORM_TOKENS
     requested_platforms = iw & PLATFORM_TOKENS
     if (

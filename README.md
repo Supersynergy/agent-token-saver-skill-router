@@ -16,6 +16,11 @@ Need the complete stack—shell-output compression, deterministic projections,
 agent hooks, profiles and end-to-end benchmarks? Use the companion full-stack
 repository: https://github.com/Supersynergy/agent-token-saver
 
+This repository is the optional extra skill/CLI. It owns only local skill
+indexing and 0/1 routing; the companion repository is the installer, hook,
+ledger and measured context-saving core. Neither installer silently installs
+the other package.
+
 ---
 
 ## Instant install (60 seconds)
@@ -122,6 +127,16 @@ Default policy:
 - use tools for cheap facts
 - use skills only when procedure changes execution
 - preserve prompt-cache stability
+
+### Agent teams: one role per worker
+
+Do not turn a wide task into ten hot skills or ten copies of a parent prompt.
+The controller first defines independent lanes and exact PASS/FAIL oracles.
+Each worker gets one 300–700-token capsule, path/hash evidence, zero or one
+routed skill, at most three tries and a <=500-token evidence-by-reference
+result. Start with zero workers for overlapping checks; otherwise cap the team
+at three independent workers and account for parent, children, retries,
+fallbacks and compactions together.
 
 ---
 

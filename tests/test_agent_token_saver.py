@@ -276,7 +276,7 @@ class AgentTokenSaverTests(unittest.TestCase):
             root = Path(td) / "skills"
             write_skill(
                 root,
-                "superweb",
+                "web-fetcher",
                 "Search and scrape web APIs and current documentation.",
                 "web, search, api",
             )
@@ -293,7 +293,7 @@ class AgentTokenSaverTests(unittest.TestCase):
                 "security, auth, owasp",
             )
             favorites = Path(td) / "favorites.txt"
-            favorites.write_text("superweb=8\n", encoding="utf-8")
+            favorites.write_text("web-fetcher=8\n", encoding="utf-8")
 
             with patch.dict(os.environ, {"AGENT_SKILL_FAVORITES_FILE": str(favorites)}):
                 result = mod.route(
@@ -306,7 +306,7 @@ class AgentTokenSaverTests(unittest.TestCase):
             self.assertCountEqual(
                 names[:2], ["security-hardening", "requesting-code-review"]
             )
-            self.assertNotIn("superweb", names)
+            self.assertNotIn("web-fetcher", names)
 
     def test_common_roots_include_codex_plugin_cache(self):
         with tempfile.TemporaryDirectory() as td:
@@ -519,8 +519,8 @@ class AgentTokenSaverTests(unittest.TestCase):
             write_skill(
                 root,
                 "token-stack-operations",
-                "Audit token-saving and context-saving stacks across Codex. Covers noisy tool output, Synapse memory, skills, and subagents.",
-                "tokens, context, memory, synapse, routing",
+                "Audit token-saving and context-saving stacks across Codex. Covers noisy tool output, local artifacts, skills, and agent teams.",
+                "tokens, context, artifacts, routing, teams",
             )
             write_skill(
                 root,
@@ -530,7 +530,7 @@ class AgentTokenSaverTests(unittest.TestCase):
             )
             write_skill(
                 root,
-                "swarmfish",
+                "simulation-orchestrator",
                 "Run prediction simulations with many Codex subagents and produce output.",
                 "simulation, forecast",
             )
@@ -541,18 +541,42 @@ class AgentTokenSaverTests(unittest.TestCase):
                 "memory, optimization, training",
             )
             fav = Path(td) / "favs.txt"
-            fav.write_text("swarmfish=8\n", encoding="utf-8")
+            fav.write_text("simulation-orchestrator=8\n", encoding="utf-8")
 
             with patch.dict(os.environ, {"AGENT_SKILL_FAVORITES_FILE": str(fav)}):
                 result = mod.route(
-                    "optimize Codex subagents, Synapse memory, token context, and noisy tool outputs",
+                    "optimize Codex agent teams, token context, and noisy tool outputs",
                     roots=[root],
                 )
 
             self.assertEqual(result.selected[0].name, "token-stack-operations")
             self.assertNotIn("codex", [s.name for s in result.selected])
-            self.assertNotEqual(result.selected[0].name, "swarmfish")
+            self.assertNotEqual(result.selected[0].name, "simulation-orchestrator")
             self.assertNotIn("peft-fine-tuning", [s.name for s in result.selected])
+
+    def test_coding_agent_team_beats_microsoft_teams_skill(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(
+                root,
+                "agent-token-saver",
+                "Use compact capsules and machine oracles for cheap coding agent teams.",
+                "tokens, context, agent-teams, capsule, subagent",
+            )
+            write_skill(
+                root,
+                "teams-meeting-pipeline",
+                "Operate Microsoft Teams meeting summaries and Graph subscriptions.",
+                "microsoft, teams, meetings, graph",
+            )
+
+            result = mod.route(
+                "optimize coding agent teams with compact capsules and token context",
+                roots=[root],
+                strict=True,
+            )
+
+            self.assertEqual([skill.name for skill in result.selected], ["agent-token-saver"])
 
     def test_token_stack_audit_beats_generic_goal_audit(self):
         with tempfile.TemporaryDirectory() as td:
@@ -566,8 +590,8 @@ class AgentTokenSaverTests(unittest.TestCase):
             write_skill(
                 root,
                 "token-stack-operations",
-                "Audit token-saving context stacks across Codex with routing, Synapse, and lean MCP defaults.",
-                "token, saving, stack, context, routing, synapse",
+                "Audit token-saving context stacks across Codex with routing, local artifacts, and lean MCP defaults.",
+                "token, saving, stack, context, routing, artifacts",
             )
 
             result = mod.route("audit Codex token saving stack", roots=[root])

@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.3 — 2026-07-14
+
+- Position the router as a separate optional skill/CLI; the full token-saver
+  installer remains independently inspectable and never installs this package.
+- Add controller/worker guidance: compact capsules, one routed skill per
+  worker, closed oracle, total accounting and a default maximum of three
+  independent workers.
+- Clarify that `--max 10` is an explicit broad-manifest ceiling, not an
+  agent-team default.
+
 ## 1.2.2 — 2026-07-14
 
 - Stop the software-development test bonus from selecting a debugger for plain

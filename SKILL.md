@@ -1,12 +1,12 @@
 ---
 name: agent-token-saver-skill-router
 description: Use when an agent has many skills/tools/prompts and must cut prompt tokens by routing adaptively. Runs routing outside model context when possible, indexes metadata on disk, lazy-loads zero or one primary skill by default, and benchmarks savings across agents.
-version: 1.2.2
+version: 1.2.3
 author: Supersynergy
 license: MIT
 metadata:
   hermes:
-    tags: [tokens, skills, router, prompt-cache, claude-code, codex, hermes]
+    tags: [tokens, skills, router, prompt-cache, agent-teams, capsule, claude-code, codex, hermes]
     related_skills: [just-in-time-skill-router, token-budget-advisor]
 ---
 
@@ -22,6 +22,8 @@ Goal: keep the system prompt tiny, preserve prefix-cache stability, and load onl
 
 For native hooks, shell-output compression, deterministic projections and the
 full measured stack, see https://github.com/Supersynergy/agent-token-saver.
+This router is a separate optional skill/CLI; the full-stack installer never
+downloads or updates it implicitly.
 
 ## When to Use
 
@@ -49,7 +51,7 @@ Default load budget:
 | Automatic route | 0-1 |
 | Explicit multi-domain task | one primary; extra paths stay cold until their phase |
 | Production/security/release | one primary skill per phase |
-| Broad controller manifest | 4-10 cold paths |
+| Broad controller manifest | 0-3 cold paths normally; `--max 10` only when explicit |
 
 Stop loading once the next concrete action is clear.
 
@@ -114,7 +116,8 @@ Common roots:
 ## Stacks, Subagents, and Processes
 
 - Default: `route "<task>"` returns at most one active skill.
-- Broad task: `route "<task>" --max 10` permits an explicit 10-skill manifest.
+- Broad task: `route "<task>" --max 10` permits an explicit 10-skill manifest,
+  but this is not the normal agent-team path.
 - Controller: load only the primary skill needed for its next decision. Hand a
   subagent only its own primary path plus a compact task contract; do not forward
   the controller's full stack or raw catalog.
@@ -124,6 +127,18 @@ Common roots:
 - Explicit `$skill-name` references retain their order and can fill all 10
   slots. Fuzzy results remain a shortlist, not an instruction to read ten
   bodies immediately.
+
+## Agent teams
+
+Use a controller, not a broad prompt broadcast. Before spawning, define one
+independent closed objective and one machine oracle for each lane. A worker
+receives a 300–700-token capsule containing evidence paths/hashes, constraints,
+one routed skill path at most, three tries at most and a <=500-token return.
+
+Start with no worker for a small overlapping check. Otherwise use at most three
+independent workers. The controller receives claim, evidence reference, command
+and oracle result—not raw logs or the parent transcript—and totals parent,
+children, retries, fallbacks and compactions before accepting the result.
 
 ## CLI Helper
 
@@ -234,6 +249,7 @@ Report:
 - [ ] Full skills remain loadable on demand.
 - [ ] `bench` shows before/after token counts.
 - [ ] No more than one skill is auto-loaded per normal task or subagent.
+- [ ] Team workers are independent, capped at three, and have a machine oracle.
 - [ ] Broad controller stacks use at most 10 paths and lazy-load by phase.
 - [ ] Production/security/release phase changes still route to the right gate skill.
 - [ ] New session/restart confirms prompt-size reduction.
