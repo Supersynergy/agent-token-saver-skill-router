@@ -220,6 +220,15 @@ class AgentTokenSaverTests(unittest.TestCase):
 
             self.assertEqual(result.selected, [])
 
+    def test_run_tests_is_plain_verification_and_loads_no_skill(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(root, "test-driven-development", "Use red-green-refactor for tests.")
+
+            result = mod.route("run tests", roots=[root], strict=True)
+
+            self.assertEqual(result.selected, [])
+
     def test_tags_and_normalized_testing_terms_beat_generic_builder(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td) / "skills"
@@ -568,6 +577,12 @@ class AgentTokenSaverTests(unittest.TestCase):
                 "teams-meeting-pipeline",
                 "Operate Microsoft Teams meeting summaries and Graph subscriptions.",
                 "microsoft, teams, meetings, graph",
+            )
+            write_skill(
+                root,
+                "token-context-optimization",
+                "Optimize agent token context and session memory.",
+                "tokens, context, agent",
             )
 
             result = mod.route(

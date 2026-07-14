@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.4 — 2026-07-14
+
+- Route plain `run tests` verification to zero skills, matching the existing
+  zero-skill policy for ordinary test checks.
+- Normalize agent-team wording and prefer controller/worker skills over
+  Microsoft Teams meeting/calendar integrations for coding-agent intents.
+- Add regressions for both routing collisions.
+
 ## 1.2.3 — 2026-07-14
 
 - Position the router as a separate optional skill/CLI; the full token-saver

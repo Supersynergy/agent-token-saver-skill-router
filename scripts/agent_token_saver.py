@@ -78,12 +78,15 @@ TOKEN_NORMALIZATION = {
     "failed": "fail",
     "failure": "fail",
     "failures": "fail",
+    "agents": "agent",
+    "capsules": "capsule",
     "memories": "memory",
     "optimized": "optimize",
     "optimizing": "optimize",
     "optimization": "optimize",
     "outputs": "output",
     "subagents": "subagent",
+    "teams": "team",
     "tokens": "token",
     "tools": "tool",
 }
@@ -120,6 +123,9 @@ TOKEN_CONTEXT_TOKENS = {
     "stack",
     "token",
 }
+PLAIN_TEST_TOKENS = {"change", "check", "output", "run", "suite", "test", "verify"}
+AGENT_TEAM_TOKENS = {"agent", "capsule", "controller", "oracle", "subagent", "team", "worker"}
+MEETING_TOKENS = {"calendar", "graph", "meeting", "microsoft", "subscription"}
 WORKFLOW_TOKENS = {
     "analyze",
     "audit",
@@ -614,6 +620,15 @@ def score(
             s += 12
         elif domain_coverage == 0:
             s -= 12
+    # "agent team" is a workflow concept, not a request for Microsoft Teams.
+    # Prefer skills that describe controller/worker contracts and penalize
+    # meeting/calendar integrations that only match the generic word "team".
+    if {"agent", "team"} <= iw:
+        team_coverage = len(skill_words & AGENT_TEAM_TOKENS)
+        if team_coverage >= 2:
+            s += 4 * team_coverage
+        elif skill_words & MEETING_TOKENS:
+            s -= 12
     skill_platforms = (nw | dw | kw) & PLATFORM_TOKENS
     requested_platforms = iw & PLATFORM_TOKENS
     if (
@@ -669,6 +684,16 @@ def route(
         )
     intent_words = words(intent)
     if not (intent_words & WORKFLOW_TOKENS):
+        block = render_router_block(intent, [], len(skills), root_paths, favorites)
+        return RouteResult(
+            intent=intent,
+            selected=[],
+            scanned=len(skills),
+            roots=[str(p) for p in root_paths],
+            router_block=block,
+            catalog_source=catalog_data.source,
+        )
+    if "test" in intent_words and intent_words <= PLAIN_TEST_TOKENS:
         block = render_router_block(intent, [], len(skills), root_paths, favorites)
         return RouteResult(
             intent=intent,
