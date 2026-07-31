@@ -1,14 +1,17 @@
 # Save Your Skill Tokens
 
-**Route outside model context. Load zero or one skill only when it helps.**
+**Your agent reads one skill file, not forty.**
 
-`agent-token-saver-skill-router` is a universal skill router for Hermes, Claude Code, Codex CLI, GG Coder, OpenCode, Cursor, Windsurf, and repo-local agents. It stops the most common skill-system tax: dumping every `SKILL.md` into every prompt before the agent knows what it needs.
+Skill systems paste every `SKILL.md` into the prompt before the agent has any idea
+which one it needs. You pay for all of them, on every turn.
 
-On hook-capable hosts, routing runs outside model context and injects only the
-single winning skill pointer. On other hosts, keep one tiny router hot. A
-canonical disk index keeps every other skill cold and dynamically resolvable.
-Explicit multi-phase workflows may request more paths, but still read one phase
-at a time.
+This router picks the one skill that fits the task, or none at all, and passes on
+just that one. The rest stay on disk and are found only when asked for. Where the
+tool you use supports hooks, the picking happens before the model is called, so it
+costs you nothing at all.
+
+Works with Hermes, Claude Code, Codex CLI, GG Coder, OpenCode, Cursor and Windsurf.
+A job with several phases can ask for more, but still reads one phase at a time.
 
 Repo: https://github.com/Supersynergy/agent-token-saver-skill-router
 
