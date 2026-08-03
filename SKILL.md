@@ -1,10 +1,10 @@
 ---
 name: agent-token-saver-skill-router
 description: Use when an agent has many skills/tools/prompts and must cut prompt tokens by routing adaptively. Runs routing outside model context when possible, indexes metadata on disk, lazy-loads zero or one primary skill by default, and benchmarks savings across agents.
-version: 1.2.4
-author: Supersynergy
 license: MIT
 metadata:
+  version: 1.6.2
+  author: Supersynergy
   hermes:
     tags: [tokens, skills, router, prompt-cache, agent-teams, capsule, claude-code, codex, hermes]
     related_skills: [just-in-time-skill-router, token-budget-advisor]
@@ -113,6 +113,45 @@ Common roots:
 7. **Execute** with tools.
 8. **Benchmark** token savings when changing router behavior.
 
+## Self-Learning Without an Echo Chamber
+
+Every CLI/hook route records a compact event under
+`~/.local/state/agent-skill-router/`. The event contains a one-way intent hash,
+selected skill names, decision, score, margin and timestamp—never the raw
+prompt. `si stats` merges those route counts with actual load/use telemetry
+from Claude/Codex `~/.gg/skill-usage*.jsonl` and Hermes
+`~/.hermes/skills/.usage.json`.
+
+Automatic learning uses actual application only as a tiny familiarity signal
+(maximum +2). Explicit `si feedback <skill> success|failure` is stronger, but
+the total adaptive adjustment stays between -6 and +8 and applies only after a
+skill already has a positive deterministic content match. Route frequency
+itself never improves rank, preventing self-reinforcing popularity loops.
+Alias history is aggregated into its canonical skill before ranking, and every
+report labels the current evidence window `low`, `medium`, or `high` confidence.
+
+Operational telemetry stays in sidecars. The router never rewrites, archives,
+or deletes `SKILL.md` files automatically. Use `si doctor`, `si drift`, and the
+complete `si stats --all` report to select review-gated metadata/content
+improvements.
+
+Tools use a separate registry and ranking surface. `ghmax` (alias `ghgrep`),
+`tilth`, canonical `superweb` (including the old `superscrape`, `smart-fetch`,
+`hyperfetch`, `superfetch`, `supersearch`, `feeds-pull`, `batch-md-rs`, and `bulkfetch`
+commands), `synxp` (alias `synx`), `rtk`, `grepgod`, `rg`, `just`,
+`git`, and other high-leverage local CLIs are never counted as skill loads.
+Exact tool names win deterministically; strong pure-tool requests return zero
+skills. Codex/Claude PostToolUse and Hermes `post_tool_call` observers store
+only canonical tool name, outcome, bounded
+latency and timestamp—never the command, arguments, output, or raw prompt. Tool
+learning is bounded and cannot create semantic relevance.
+
+Skill suites are not alias maps. The Superweb component skills
+`superscrape`, `stealth-research`, `stealth-scraper`, and `scrape-deep` keep
+their own exact-name telemetry and feedback while generic multi-step web work
+selects `superweb`. Only equivalent executable modes share the canonical tool
+ranking.
+
 ## Stacks, Subagents, and Processes
 
 - Default: `route "<task>"` returns at most one active skill.
@@ -149,12 +188,34 @@ si index --refresh
 si route "<task>" --strict --json
 si find "<keywords>" --limit 8
 si resolve <exact-skill-name>
+si resolve <legacy-name> --canonical
+si aliases --json
+si drift --all --json --output /tmp/skill-drift.json
+si explain "<task>"
+si stats --all --output /tmp/skill-usage.tsv
+si feedback <exact-skill-name> success
+si tools --all --output /tmp/tool-usage.tsv
+si inventory --output /tmp/skill-tool-inventory.json
+si tool-feedback ghmax success --latency-ms 850
+si install-hooks --target all
+si hook-status
+si doctor --json
 si bench "<task>"
 ```
+
+Hermes preserves its consent gate: with `hooks_auto_accept: false`, approve the
+new observer once on first use. The installer never weakens that global gate.
 
 `si` and `agent-skill-route` are identical entrypoints. No dependencies.
 Python stdlib only. The cache TTL defaults to 300 seconds; rebuild after skill
 installs or frontmatter edits.
+
+Historical names remain compatibility shims. `si aliases` shows their canonical
+responsibility; explicit aliases resolve directly to the canonical skill when
+it is installed, and `si stats` aggregates historical applied usage into that
+name without double-counting events. Aliases and umbrella routers stay excluded
+from automatic fuzzy selection. `si drift` separately reports identical and
+divergent active same-name copies without modifying them.
 
 ## Favorites & Noise Filter
 
@@ -253,3 +314,5 @@ Report:
 - [ ] Broad controller stacks use at most 10 paths and lazy-load by phase.
 - [ ] Production/security/release phase changes still route to the right gate skill.
 - [ ] New session/restart confirms prompt-size reduction.
+- [ ] Route logs contain hashes and scores, never raw prompts.
+- [ ] Learned adjustments cannot create relevance or exceed the bounded range.

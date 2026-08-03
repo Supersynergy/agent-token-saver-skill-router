@@ -1,5 +1,93 @@
 # Changelog
 
+## 1.6.2 — 2026-07-15
+
+- Normalize common German web-research verbs, sources, recency, citations,
+  crawling, extraction, and download terms before skill and tool scoring.
+- Treat summarization as a workflow signal and teach the canonical Superweb
+  tool surface about cited source synthesis.
+- Add a strict regression proving that a German multi-source research request
+  selects the top-level Superweb suite while explicit legacy skill names keep
+  their own identity.
+
+## 1.6.1 — 2026-07-15
+
+- Correct Superweb from a flattened skill-alias group to a real suite model:
+  `superscrape`, `stealth-research`, `stealth-scraper`, and `scrape-deep` now
+  keep independent exact-name routing, usage, and feedback. Only the observed
+  `scrapedeep` spelling remains an alias to `scrape-deep`.
+- Keep canonical tool aggregation for the eight executable names that really
+  delegate to the same Superweb runtime, including the restored `superfetch`
+  compatibility command.
+- Exclude `backup/`, `backups/`, `_skill-packages/`, and nested
+  `related-skills/` trees from discovery so readable suite snapshots and
+  packaged references cannot become accidental active skills.
+
+## 1.6.0 — 2026-07-15
+
+- Consolidate `superscrape`, `stealth-research`, `stealth-scraper`,
+  `scrape-deep`, and the observed `scrapedeep` spelling into canonical
+  `superweb`; exact legacy names now resolve to the canonical skill when it is
+  installed.
+- Consolidate the old web executables (`superscrape`, `smart-fetch`,
+  `hyperfetch`, `supersearch`, `feeds-pull`, `batch-md-rs`, and `bulkfetch`)
+  into one truthful `superweb` tool ranking and outcome stream.
+- Aggregate alias outcomes before adaptive ranking, while keeping deterministic
+  relevance first and the existing bounded tie-breaker.
+- Add evidence-window confidence to skill/tool reports and `doctor` so sparse
+  telemetry is never presented as mature self-learning.
+- Add read-only `si drift` hashing for identical versus divergent active skill
+  copies; cleanup stays archive-first and review-gated.
+- Improve German/English normalization for diagnose, improvement, update,
+  cleanup, merge, and portfolio-review requests.
+- Restrict the software-test bonus to debug/failure or platform-specific test
+  work, so a portfolio request containing `prüfe` cannot route to TDD.
+- Add regressions for canonical web routing, alias learning, command aliases,
+  German governance routing, drift classification, and learning confidence.
+
+## 1.5.0 — 2026-07-15
+
+- Keep `agent-efficiency-orchestrator` as an independent, routable workflow-
+  efficiency skill instead of canonicalizing it to code-review behavior.
+- Preserve independent responsibilities for the weekly skill diary, per-skill
+  token optimizer, and explicit offline `skill-autopilot` laboratory.
+- Add an auditable skill-alias map plus `aliases` and canonical `resolve`
+  surfaces; compatibility shims remain explicit while fuzzy routing selects
+  the canonical responsibility.
+- Aggregate historical alias telemetry into canonical usage without counting
+  events twice or flagging known archived aliases as unknown.
+- Exclude deprecated umbrella/domain routers from automatic selection and add
+  regressions for canonical usage and explicit-only aliases.
+
+## 1.4.0 — 2026-07-14
+
+- Add a separate installed-tool registry and ranking surface for the lean local
+  stack, including canonical aliases such as `ghgrep` → `ghmax` and `synx` →
+  `synxp`; tool use never inflates skill application counts.
+- Add privacy-safe PostToolUse observation for Codex/Claude and native
+  `post_tool_call` observation for Hermes. Logging stores
+  canonical tool name, outcome, bounded latency, and timestamp only—never raw
+  commands, arguments, output, or prompts.
+- Add `tools`, `inventory`, `tool-feedback`, `observe`, `install-hooks`, and `hook-status`.
+  Hook installation is append-only, idempotent, preserves existing hooks, and
+  does not weaken Hermes consent settings.
+- Add bounded outcome/latency learning that cannot create relevance. Exact tool
+  names win; decisive pure-tool operations load zero fuzzy skills.
+- Add regressions for `ghmax`, aliasing, bounded learning, log privacy, and hook
+  preservation/idempotency.
+
+## 1.3.0 — 2026-07-14
+
+- Add privacy-safe route telemetry with one-way intent hashes and no raw prompts.
+- Add `stats`, `explain`, `feedback`, and `doctor` commands; merge route counts,
+  Claude/Codex skill loads, Hermes usage counters, and explicit outcomes while
+  keeping legacy predictions separate from real application.
+- Add bounded adaptive ranking: usage is a small tie-breaker, success/failure is
+  stronger, and learning can never create relevance for an unrelated skill.
+- Keep `skill-autopilot` explicit-only to prevent recursive meta-router routes.
+- Add regressions for privacy, complete usage reporting, bounded feedback, and
+  the meta-router collision.
+
 ## 1.2.4 — 2026-07-14
 
 - Route plain `run tests` verification to zero skills, matching the existing

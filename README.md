@@ -19,10 +19,11 @@ Need the complete stack—shell-output compression, deterministic projections,
 agent hooks, profiles and end-to-end benchmarks? Use the companion full-stack
 repository: https://github.com/Supersynergy/agent-token-saver
 
-This repository is the optional extra skill/CLI. It owns only local skill
-indexing and 0/1 routing; the companion repository is the installer, hook,
-ledger and measured context-saving core. Neither installer silently installs
-the other package.
+This repository is the optional skill/tool router CLI. It owns local skill
+indexing, 0/1 skill routing, compact tool ranking, and its own optional
+privacy-safe usage observer. The companion repository owns the broader hook,
+ledger, compression, and measured context-saving stack. Neither installer
+silently installs the other package.
 
 ---
 
@@ -82,16 +83,18 @@ Measured on Maxim's Hermes profile, 2026-07-09:
 
 ### Universal local skill-library benchmark
 
-Measured with 459 installed skills (2026-07-13):
+Measured with 453 active skill names (2026-07-15):
 
 | Mode | Chars | Est. tokens (`chars/4`) |
 |---|---:|---:|
-| Full skill catalog | 148,308 | 37,077 |
-| Router result | 357 | 89 |
-| Saved | 147,951 | 36,988 |
+| Full skill catalog | 143,955 | 35,988 |
+| Router result | 237 | 59 |
+| Saved | 143,718 | 35,929 |
 
-**Reduction: 99.76% of the routed skill context.** Warm index routing averaged
-48.1 ms over 30 runs; forced rebuild averaged 111.9 ms over 10 runs.
+**Reduction: 99.84% of the routed skill context.** Warm index routing averaged
+66.5 ms over 20 runs; forced rebuild averaged 134.5 ms over 10 runs. `si drift`
+reports physical copy counts separately, while routing indexes one canonical
+metadata record per active name.
 
 > Token estimate uses `chars / 4`. It is intentionally simple, transparent, and model-agnostic.
 
@@ -117,6 +120,9 @@ third-party numbers are the proof asset this project wants most.
 4. Returns zero on trivial/ambiguous work, otherwise one winner by default.
 5. Lets the agent read only that winning `SKILL.md`.
 6. Benchmarks full-catalog vs routed context.
+7. Logs privacy-safe route decisions and learns only from bounded usage/outcome signals.
+8. Ranks installed high-leverage CLIs separately from skills and observes real
+   tool outcomes without storing commands, arguments, output, or prompts.
 
 Default policy:
 
@@ -177,6 +183,18 @@ si index --refresh
 si route "debug failing pytest in Hermes prompt builder" --strict --json
 si find "pytest debug" --limit 5
 si resolve python-debugpy
+si resolve just-in-time-skill-router --canonical
+si aliases --json
+si drift --all --json --output /tmp/skill-drift.json
+si explain "debug failing pytest in Hermes prompt builder"
+si stats --all --output /tmp/skill-usage.tsv
+si feedback python-debugpy success
+si tools --all --output /tmp/tool-usage.tsv
+si inventory --output /tmp/skill-tool-inventory.json
+si tool-feedback ghmax success --latency-ms 850
+si install-hooks --target all
+si hook-status
+si doctor --json
 si bench "debug failing pytest in Hermes prompt builder"
 si route '$security-hardening $release-excellence' --max 2
 ```
@@ -190,7 +208,54 @@ Tested with:
 Python 3.14.6
 ```
 
-### 3. Canonical cold index
+### 3. Privacy-safe self-learning
+
+`si route` stores only an intent hash, selected names, score/margin, decision,
+timestamp and route ID. It does not persist raw prompt text. `si stats` merges
+router counts with actual Claude/Codex skill-load telemetry and Hermes usage
+counters, while keeping legacy ML suggestions separate from real application.
+
+Applied use supplies at most a +2 tie-breaker. Historical alias use is first
+rolled into the canonical responsibility. Explicit success/failure feedback
+has more weight, but the combined adjustment is clamped to -6…+8 and is ignored
+when deterministic metadata has no positive match. Mere route frequency never
+trains the router. This prevents a popular wrong skill from training itself to
+become more popular.
+
+The router does not auto-edit or auto-delete skills. `si doctor` flags coverage,
+malformed telemetry, missing descriptions, unknown observed skills, evidence
+confidence, and active copy drift. `si drift --all` distinguishes identical
+copies from divergent same-name bodies; content changes remain review-gated.
+
+True compatibility aliases resolve to the canonical skill when it is installed,
+while automatic routing chooses that same domain responsibility. Suite
+membership alone is not an alias: distinct component procedures keep their own
+exact-name usage and outcomes. `si aliases` audits the actual alias map and
+`si stats` rolls historical alias usage into canonical totals without counting
+one event twice. This preserves evidence when a large legacy skill becomes a
+small shim or is archived.
+
+### 4. Separate tool ranking and learning
+
+Skills are procedures; tools are executables. The router keeps their counts
+separate. Its bounded registry covers the lean default stack and common local
+workhorses, including `ghmax`/`ghgrep`, canonical `superweb` plus its legacy
+command aliases (`superscrape`, `smart-fetch`, `hyperfetch`, `superfetch`,
+`supersearch`, `feeds-pull`, `batch-md-rs`, `bulkfetch`), `tilth`, `grepgod`,
+`synxp`/`synx`, `rtk`, `graphify`, `codegraph`, `freshdocs`, `rg`, `just`,
+`git`, `jq`, SQLite, DuckDB, and guarded token-stack helpers.
+
+`si install-hooks --target all` appends idempotent Codex/Claude PostToolUse and
+Hermes `post_tool_call` observers without replacing existing hooks. It records only
+canonical name, success/failure/unknown, bounded latency, and timestamp. Exact
+tool mentions always win; semantic selection requires a confidence floor and
+margin. Route frequency never trains rank, and adaptive signals apply only
+after deterministic relevance exists.
+
+Hermes keeps its native consent model. If `hooks_auto_accept: false`, approve
+the observer once on first use; this installer does not weaken the global gate.
+
+### 5. Canonical cold index
 
 ```text
 ~/.cache/agent-token-saver/skills-index.json
@@ -210,7 +275,7 @@ si resolve dsgvo-shield   # exact path only
 Overrides: `AGENT_SKILL_INDEX`, `AGENT_SKILL_INDEX_TSV`, and
 `AGENT_SKILL_INDEX_TTL`.
 
-### 4. Supports folder skills and flat GG Coder skills
+### 6. Supports folder skills and flat GG Coder skills
 
 Recognizes:
 
@@ -221,7 +286,7 @@ agent-token-saver-skill-router.md
 
 That matters because not every agent stores skills the same way.
 
-### 5. Transparent routing output
+### 7. Transparent routing output
 
 Example:
 
@@ -235,7 +300,7 @@ load:
 
 No hidden magic. Automatic routing returns at most one primary skill.
 
-### 6. Built-in proof
+### 8. Built-in proof
 
 Run:
 

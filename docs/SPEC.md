@@ -10,12 +10,46 @@ Given a task intent and local skill roots, the router returns:
 
 1. a compact selected skill set,
 2. a visible router block,
-3. a benchmark comparing full-catalog vs router-token estimates.
+3. zero or one separately ranked installed tool recommendation,
+4. a benchmark comparing full-catalog vs router-token estimates.
 
 The automatic selected set is zero or one primary skill. The CLI permits up to
 10 cold paths via explicit `--max 10` for a broad controller manifest; 10 is a
 hard ceiling. A controller loads one skill per phase and gives each subagent
 only its own primary skill path, never the whole manifest.
+
+Every CLI/hook route appends privacy-safe decision telemetry containing an
+intent hash but no raw prompt. Usage reports merge router selections with
+actual Claude/Codex loads and Hermes use counters. Adaptive ranking uses only a
+bounded application/outcome adjustment after deterministic relevance is
+positive; selection frequency never trains selection.
+
+Historical compatibility names map to a canonical responsibility. Exact alias
+requests resolve directly to the canonical skill when it is installed; aliases
+remain excluded from automatic fuzzy routing. Reports retain raw per-skill rows
+and separately aggregate canonical usage, so archive/merge work preserves
+history without double counting. Adaptive ranking uses the same canonical
+aggregate and reports `low`, `medium`, or `high` evidence confidence.
+A suite relationship is not a compatibility alias: independently useful
+component procedures keep exact-name routing and outcome telemetry.
+
+Tool routing is a separate contract. A curated registry resolves executable
+availability and aliases (`ghgrep` → `ghmax`, `synx` → `synxp`, legacy web
+commands → `superweb`), scores exact
+mentions before semantic matches, and returns no recommendation below its
+confidence/margin gates. A decisive pure-tool operation suppresses fuzzy skill
+loading. Observers append to existing Codex/Claude PostToolUse and Hermes
+`post_tool_call` hook config and
+persist only canonical name, outcome, bounded latency, and timestamp. They
+never store raw command text, arguments, output, or prompts. Actual tool use
+and outcomes provide a bounded tie-breaker only after positive deterministic
+relevance; recommendation frequency never trains ranking.
+Hermes hook consent remains controlled by `hooks_auto_accept`; installation
+does not change it.
+
+Portfolio drift is a read-only contract. `si drift` scans every active copy,
+hashes bodies, and distinguishes identical duplication from divergent same-name
+skills. It never edits, archives, or deletes a skill.
 
 For an agent team, a controller starts with zero workers and spawns at most
 three independent lanes only when each has a closed machine oracle. A worker
@@ -67,6 +101,9 @@ Default scan roots:
 - Running remote code.
 - Requiring a Python package install.
 - Exact tokenizer billing for every model.
+- Automatically rewriting, deleting, or archiving user-authored skills.
+- Inventing a SKILL.md wrapper for every executable or treating tool use as a
+  skill application.
 
 ## Verification
 

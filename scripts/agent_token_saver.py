@@ -8,18 +8,38 @@ Codex CLI, OpenCode, Cursor, Windsurf, and repo-local agents.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import json
+import math
 import os
 import re
+import shlex
 import shutil
+import sys
 import time
 from collections import Counter
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Iterable
 
 SKILL_NAME = "agent-token-saver-skill-router"
+# Compatibility names stay resolvable for explicit users and old hosts. A
+# suite/component relationship is deliberately not an alias: distinct
+# procedures keep independent exact-name routing, telemetry, and feedback.
+SKILL_ALIASES = {
+    "ad-hoc-verification": "verification-workflows",
+    "allskills": SKILL_NAME,
+    "claude-token-saver-setup": "token-stack-operations",
+    "just-in-time-skill-router": SKILL_NAME,
+    "qdrant-os-allskills": SKILL_NAME,
+    "requesting-code-review": "metareview",
+    "scrapedeep": "scrape-deep",
+    "sm": SKILL_NAME,
+    "sm-md": SKILL_NAME,
+    "token-context-optimization": "agent-token-saver",
+}
 # Legacy in-context controllers may call this router again and recursively load
 # more skills. Keep them explicit-only; normal fuzzy routing selects a domain
 # skill directly.
@@ -30,10 +50,34 @@ AUTO_ROUTE_EXCLUDED = {
     # Context-mode is a deliberate heavy/session layer. Its broad trigger list
     # must not make ordinary test or log tasks pay to load its full handbook.
     "context-mode",
+    # This legacy ML controller can recursively select another router. Its
+    # telemetry remains readable, but automatic 0/1 routing must choose a
+    # domain procedure instead of another selector.
+    "skill-autopilot",
+    "agent-os-meta",
+    "allskills",
+    "claude-token-saver-setup",
+    "meta-cross-skill-recipe-composer",
+    # master-check is a control skill (unified verify/audit dashboard). It was
+    # excluded because its broad trigger list can win on generic "check" intents,
+    # but it must remain reachable when the user asks for a unified dashboard.
+    # Removed 2026-07-24; control skills are now first-class routable targets.
+    "megaforge",
+    "omega",
+    "qdrant-os-allskills",
+    "requesting-code-review",
+    "scrape-deep",
+    "scrapedeep",
+    "simplify-code",
+    "stealth-research",
+    "stealth-scraper",
+    "superscrape",
+    "token-context-optimization",
+    "ad-hoc-verification",
 }
 ROOT = Path(__file__).resolve().parents[1]
 ROOT_SKILL = ROOT / "SKILL.md"
-WORD_RE = re.compile(r"[a-zA-Z0-9+]{2,}")
+WORD_RE = re.compile(r"[\w+]{2,}", re.UNICODE)
 EXPLICIT_SKILL_RE = re.compile(r"\$([a-zA-Z0-9_:+.-]+)")
 STOPWORDS = {
     "a",
@@ -66,9 +110,45 @@ STOPWORDS = {
     "what",
     "your",
     "builder",
+    "bei",
+    "alle",
+    "allen",
+    "alles",
+    "das",
+    "dem",
+    "den",
+    "der",
+    "die",
+    "du",
+    "ein",
+    "eine",
+    "einem",
+    "einen",
+    "einer",
+    "für",
+    "fuer",
+    "im",
+    "ist",
+    "mit",
+    "muss",
+    "müssen",
+    "muessen",
+    "noch",
+    "oder",
+    "sind",
+    "und",
+    "vom",
+    "von",
+    "werden",
+    "welche",
+    "welcher",
+    "welches",
+    "wie",
+    "zu",
 }
 TOKEN_NORMALIZATION = {
     "contexts": "context",
+    "skills": "skill",
     "tests": "test",
     "testing": "test",
     "pytest": "test",
@@ -84,11 +164,185 @@ TOKEN_NORMALIZATION = {
     "optimized": "optimize",
     "optimizing": "optimize",
     "optimization": "optimize",
+    "diagnose": "debug",
+    "diagnoses": "debug",
+    "diagnosis": "debug",
+    "diagnostic": "debug",
+    "improvement": "optimize",
+    "improvements": "optimize",
+    "extracted": "extract",
+    "extracting": "extract",
+    "extraction": "extract",
+    "contacts": "contact",
+    "websites": "website",
+    "capabilities": "capability",
+    "updated": "update",
+    "updates": "update",
+    "updating": "update",
     "outputs": "output",
     "subagents": "subagent",
     "teams": "team",
     "tokens": "token",
     "tools": "tool",
+    "angewendet": "use",
+    "anwenden": "use",
+    "auflisten": "list",
+    "aufräumen": "cleanup",
+    "aufraeumen": "cleanup",
+    "aufgeräumt": "cleanup",
+    "aufgeraeumt": "cleanup",
+    "auswahl": "selection",
+    "baue": "build",
+    "bauen": "build",
+    "erstelle": "create",
+    "erstellen": "create",
+    "liste": "list",
+    "mergen": "merge",
+    "nutzung": "usage",
+    "optimiere": "optimize",
+    "optimieren": "optimize",
+    "pruefe": "test",
+    "pruefen": "test",
+    "prüfe": "test",
+    "prüfen": "test",
+    "selbstlernend": "learn",
+    "teste": "test",
+    "testen": "test",
+    "verbessere": "optimize",
+    "verbessert": "optimize",
+    "verbessern": "optimize",
+    "verbesserung": "optimize",
+    "verbesserungen": "optimize",
+    "überlege": "analyze",
+    "überlegen": "analyze",
+    "ueberlege": "analyze",
+    "ueberlegen": "analyze",
+    "aktualisiere": "update",
+    "aktualisieren": "update",
+    "aktuell": "current",
+    "aktuelle": "current",
+    "aktuellen": "current",
+    "aktueller": "current",
+    "aktuelles": "current",
+    "crawle": "crawl",
+    "crawlen": "crawl",
+    "extrahiere": "extract",
+    "extrahieren": "extract",
+    "fasse": "summarize",
+    "herunterladen": "download",
+    "quelle": "source",
+    "quellen": "source",
+    "recherche": "research",
+    "recherchiere": "research",
+    "recherchieren": "research",
+    "recherchiert": "research",
+    "suche": "search",
+    "suchen": "search",
+    "webquelle": "web",
+    "webquellen": "web",
+    "webseite": "website",
+    "webseiten": "website",
+    "zitat": "cited",
+    "zitate": "cited",
+    "zitaten": "cited",
+    "zitiert": "cited",
+    "zusammenfassen": "summarize",
+    "zusammenführen": "merge",
+    "zusammenfuehren": "merge",
+    # German verb/object coverage (2026-07-23 recall fix): the workflow gate and
+    # the scorer are English-centric; map common German task words onto the
+    # English tokens that skill descriptions actually use.
+    "schick": "send",
+    "schicke": "send",
+    "schicken": "send",
+    "sende": "send",
+    "senden": "send",
+    "transkribiere": "transcribe",
+    "transkribieren": "transcribe",
+    "transkript": "transcript",
+    "trainiere": "train",
+    "trainieren": "train",
+    "trainiert": "train",
+    "training": "train",
+    "starte": "start",
+    "starten": "start",
+    "zeige": "show",
+    "zeigen": "show",
+    "schreibe": "write",
+    "schreiben": "write",
+    "analysiere": "analyze",
+    "analysieren": "analyze",
+    "analyse": "analyze",
+    "repariere": "fix",
+    "reparieren": "fix",
+    "installiere": "install",
+    "installieren": "install",
+    "vergleiche": "compare",
+    "vergleichen": "compare",
+    "messe": "measure",
+    "messen": "measure",
+    "berechne": "calculate",
+    "berechnen": "calculate",
+    "übersetze": "translate",
+    "übersetzen": "translate",
+    "uebersetze": "translate",
+    "uebersetzen": "translate",
+    "generiere": "generate",
+    "generieren": "generate",
+    "erzeuge": "generate",
+    "erzeugen": "generate",
+    "überwache": "monitor",
+    "überwachen": "monitor",
+    "ueberwache": "monitor",
+    "ueberwachen": "monitor",
+    "veröffentliche": "publish",
+    "veröffentlichen": "publish",
+    "veroeffentliche": "publish",
+    "veroeffentlichen": "publish",
+    "plane": "plan",
+    "planen": "plan",
+    "finde": "find",
+    "finden": "find",
+    "erkläre": "explain",
+    "erklären": "explain",
+    "erklaere": "explain",
+    "erklaeren": "explain",
+    "debugge": "debug",
+    "debuggen": "debug",
+    "konvertiere": "convert",
+    "konvertieren": "convert",
+    "umwandeln": "convert",
+    "wetter": "weather",
+    "nachricht": "message",
+    "nachrichten": "message",
+    "tabelle": "spreadsheet",
+    "tabellen": "spreadsheet",
+    "präsentation": "presentation",
+    "praesentation": "presentation",
+    "bild": "image",
+    "bilder": "image",
+    "datei": "file",
+    "dateien": "file",
+    "daten": "data",
+    "datenbank": "database",
+    "dokument": "document",
+    "dokumente": "document",
+    "ladezeit": "performance",
+    "webshop": "shop",
+    "herunterlade": "download",
+    "runterladen": "download",
+    "abspielen": "play",
+    "spiele": "play",
+    "aufnehmen": "record",
+    "aufzeichnen": "record",
+    "einrichten": "install",
+    "losche": "delete",
+    "lösche": "delete",
+    "löschen": "delete",
+    "loeschen": "delete",
+    "prüfung": "review",
+    "bewerte": "review",
+    "bewerten": "review",
 }
 PLATFORM_TOKENS = {
     "python",
@@ -115,17 +369,65 @@ SECURITY_TOKENS = {
 REVIEW_TOKENS = {"audit", "review", "regression", "regressions"}
 TOKEN_CONTEXT_TOKENS = {
     "context",
+    "feedback",
+    "learn",
+    "log",
+    "logging",
     "memory",
+    "route",
     "router",
     "routing",
     "saving",
+    "selection",
     "skill",
     "stack",
     "token",
+    "usage",
 }
 PLAIN_TEST_TOKENS = {"change", "check", "output", "run", "suite", "test", "verify"}
 AGENT_TEAM_TOKENS = {"agent", "capsule", "controller", "oracle", "subagent", "team", "worker"}
 MEETING_TOKENS = {"calendar", "graph", "meeting", "microsoft", "subscription"}
+# Control/orchestration skills (agent-loop, omnigoal, verification-loop, master-check,
+# goalmaster) must be reachable from abstract multi-step intents. These tokens signal
+# "closed-loop / goal / verify / orchestrate" workflows that the verb allowlist missed.
+CONTROL_TOKENS = {
+    "achieve",
+    "agent",
+    "audit",
+    "budget",
+    "close",
+    "closed",
+    "contract",
+    "converge",
+    "convergence",
+    "controller",
+    "coordinate",
+    "coordination",
+    "dashboard",
+    "delegate",
+    "delegation",
+    "dod",
+    "drive",
+    "fleet",
+    "gate",
+    "goal",
+    "loop",
+    "master",
+    "oracle",
+    "orchestrate",
+    "orchestration",
+    "pipeline",
+    "review",
+    "spawn",
+    "steer",
+    "stop",
+    "unified",
+    "validate",
+    "validation",
+    "verify",
+    "verification",
+    "workflow",
+}
 WORKFLOW_TOKENS = {
     "analyze",
     "audit",
@@ -134,24 +436,34 @@ WORKFLOW_TOKENS = {
     "code",
     "compress",
     "condense",
+    "cleanup",
     "create",
+    "crawl",
     "cut",
     "debug",
     "deploy",
     "design",
     "edit",
+    "extract",
     "explain",
     "fail",
     "fix",
+    "health",
     "implement",
     "install",
     "minimize",
+    "merge",
     "optimize",
+    "learn",
+    "list",
     "plan",
+    "rank",
+    "ranking",
     "readme",
     "reduce",
     "refactor",
     "release",
+    "report",
     "research",
     "review",
     "route",
@@ -159,8 +471,94 @@ WORKFLOW_TOKENS = {
     "scrape",
     "search",
     "shrink",
+    "summarize",
     "test",
     "trim",
+    "update",
+    "write",
+    # Recall fix (2026-07-23): verbs that previously fell through the gate and
+    # produced empty routes despite strong candidates (send/train/transcribe...).
+    "send",
+    "train",
+    "transcribe",
+    "download",
+    "generate",
+    "monitor",
+    "convert",
+    "publish",
+    "post",
+    "schedule",
+    "track",
+    "play",
+    "show",
+    "start",
+    "find",
+    "compare",
+    "measure",
+    "calculate",
+    "translate",
+    "record",
+    "run",
+    "check",
+    "load",
+    "delete",
+    "review",
+    "message",
+    "weather",
+    # Control/orchestration verbs (2026-07-24 recall fix): abstract multi-step
+    # intents like "multi-step coding task with verification gate" or "orchestrate
+    # a goal-driven agent loop" previously hit the no-workflow gate despite strong
+    # control-skill candidates. These verbs also let control skills compete on
+    # equal footing with domain verbs.
+    "verify",
+    "validate",
+    "verification",
+    "orchestrate",
+    "coordinate",
+    "delegate",
+    "spawn",
+    "steer",
+    "converge",
+    "close",
+    "achieve",
+    "drive",
+    "gate",
+    "loop",
+    "goal",
+    "contract",
+    "budget",
+    "pipeline",
+    "workflow",
+    "master",
+    "control",
+    "coding",
+    "task",
+}
+DIRECT_TOOL_TOKENS = {"compress", "fetch", "query", "read", "recall", "search"}
+MATERIAL_TASK_TOKENS = {
+    "audit",
+    "benchmark",
+    "build",
+    "cleanup",
+    "create",
+    "crawl",
+    "debug",
+    "deploy",
+    "design",
+    "edit",
+    "extract",
+    "fix",
+    "implement",
+    "install",
+    "merge",
+    "optimize",
+    "plan",
+    "refactor",
+    "release",
+    "research",
+    "scrape",
+    "test",
+    "update",
     "write",
 }
 EXCLUDE_DIRS = {
@@ -172,6 +570,10 @@ EXCLUDE_DIRS = {
     "__pycache__",
     ".archive",
     "_archive",
+    "_skill-packages",
+    "backup",
+    "backups",
+    "related-skills",
     "runs",
 }
 NOISE_NAME_RE = re.compile(
@@ -184,8 +586,125 @@ DEFAULT_MAX_SELECTED = 1
 MAX_SELECTED = 10
 MIN_STRICT_SCORE = 8
 MIN_STRICT_MARGIN = 3
+
+# ---------------------------------------------------------------------------
+# Tunable scoring weights (autolearn layer, 2026-07-23).
+# si-autotune grid-races these against the labeled eval set and persists the
+# winner to tuned-weights.json. Stdlib only; missing file = safe defaults.
+# ---------------------------------------------------------------------------
+TUNED_DEFAULTS: dict[str, float] = {
+    "name_w": 8.0,          # intent token in skill name
+    "desc_w": 3.0,          # intent token in description
+    "kw_w": 6.0,            # intent token in keywords
+    "coverage_w": 4.0,      # per extra matched token
+    "bigram_name": 12.0,    # intent bigram found in skill name
+    "bigram_desc": 5.0,     # intent bigram found in description
+    "desc_damp_start": 60.0,  # description word count where damping kicks in
+    "desc_damp_floor": 0.35,  # minimum description scale
+    "no_workflow_min_score": 14.0,  # fallback gate: min top score w/o verb
+    "no_workflow_min_margin": 4.0,  # fallback gate: min margin over #2
+}
+_tuned_cache: dict[str, float] | None = None
+
+
+def tuned_weights() -> dict[str, float]:
+    """Load autotuned scoring weights; fall back to TUNED_DEFAULTS."""
+    global _tuned_cache
+    if _tuned_cache is not None:
+        return _tuned_cache
+    weights = dict(TUNED_DEFAULTS)
+    path = Path.home() / ".local/state/agent-skill-router/tuned-weights.json"
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(raw, dict):
+            source = raw.get("weights", raw)
+            for key, value in source.items():
+                if key in weights and isinstance(value, (int, float)):
+                    weights[key] = float(value)
+    except Exception:
+        pass
+    _tuned_cache = weights
+    return weights
 INDEX_SCHEMA = 1
 DEFAULT_INDEX_TTL_SECONDS = 300.0
+TELEMETRY_SCHEMA = 1
+GENERIC_SKILL_NAMES = {"skill", "readme", "index", "main"}
+
+# Jury cases (2026-07-24): a deterministic battery for automated cross-checking
+# the router. Each case asserts that at least one expected skill is reachable
+# for a representative intent. Control skills (agent-loop, omnigoal,
+# verification-loop, master-check, goalmaster) must be reachable from abstract
+# multi-step intents; domain skills must still route from concrete asks. Add
+# cases here when a regression is found; never delete a case without a witness.
+JURY_CASES = [
+    # Control-skill routing — the original failing cases.
+    {
+        "intent": "multi-step coding task with verification gate",
+        "max": 3,
+        "expected": ["verification-loop", "agent-loop", "master-check", "blueprint"],
+    },
+    {
+        "intent": "run a multi-step coding task with verification gate",
+        "max": 3,
+        "expected": ["verification-loop", "agent-loop"],
+    },
+    {
+        "intent": "orchestrate a goal-driven agent loop",
+        "max": 1,
+        "strict": True,
+        "expected": ["agent-loop", "omnigoal"],
+    },
+    {
+        "intent": "run omnigoal closed-loop goal controller",
+        "max": 3,
+        "expected": ["omnigoal", "agent-loop"],
+    },
+    {
+        "intent": "master-check dashboard before demo",
+        "max": 1,
+        "strict": True,
+        "expected": ["master-check"],
+    },
+    {
+        "intent": "goalmaster goal mode objective",
+        "max": 1,
+        "strict": True,
+        "expected": ["goalmaster"],
+    },
+    {
+        "intent": "verify build types lint tests security diff before PR",
+        "max": 1,
+        "strict": True,
+        "expected": ["verification-loop"],
+    },
+    # Lock in the original failing case: --max 1 --strict must return a control
+    # skill, not an empty list. The control-skill ambiguity exception lets the
+    # top pick win when top-2 are both control skills.
+    {
+        "intent": "multi-step coding task with verification gate",
+        "max": 1,
+        "strict": True,
+        "expected": ["verification-loop", "agent-loop", "master-check"],
+    },
+    # Domain sanity checks — must not regress when control skills opened up.
+    {
+        "intent": "fix a bug in a python file",
+        "max": 1,
+        "strict": True,
+        "expected": ["python-debugpy", "bug-detective"],
+    },
+    {
+        "intent": "send a telegram message",
+        "max": 3,
+        "expected": ["bluebubbles", "using-telegram-bot", "agentmaster"],
+    },
+    {
+        "intent": "transcribe and answer this audio file",
+        "max": 1,
+        "strict": True,
+        "expected": ["tawnser"],
+    },
+]
 
 
 @dataclass(frozen=True)
@@ -205,6 +724,62 @@ class RouteResult:
     roots: list[str]
     router_block: str
     catalog_source: str = "scan"
+    decision: str = "selected"
+    top_score: int = 0
+    margin: int = 0
+    recommended_tools: list[ToolRecommendation] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ToolSpec:
+    name: str
+    description: str
+    keywords: str
+    aliases: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ToolRecommendation:
+    name: str
+    aliases: tuple[str, ...]
+    path: str
+    total_score: int
+    base_score: int
+    adaptive_adjustment: int
+    matched_tokens: tuple[str, ...]
+    explicit: bool = False
+
+
+@dataclass
+class UsageSignal:
+    routed: int = 0
+    applied: int = 0
+    views: int = 0
+    patches: int = 0
+    success: int = 0
+    failure: int = 0
+    legacy_suggested: int = 0
+    last_activity: str = ""
+
+
+@dataclass
+class ToolSignal:
+    routed: int = 0
+    used: int = 0
+    success: int = 0
+    failure: int = 0
+    total_latency_ms: int = 0
+    last_activity: str = ""
+
+
+@dataclass
+class UsageData:
+    signals: dict[str, UsageSignal]
+    tool_signals: dict[str, ToolSignal] = field(default_factory=dict)
+    malformed: int = 0
+    route_events: int = 0
+    feedback_events: int = 0
+    tool_events: int = 0
 
 
 @dataclass(frozen=True)
@@ -213,6 +788,130 @@ class Catalog:
     roots: list[Path]
     source: str
     index_path: Path
+
+
+# Tool routing is intentionally separate from skill routing. A CLI invocation
+# is usage of executable infrastructure, not evidence that a SKILL.md was read.
+TOOL_SPECS = (
+    ToolSpec(
+        "rg",
+        "Search exact text, filenames, and local repository content quickly.",
+        "local repository exact text file search regex ripgrep",
+        ("ripgrep",),
+    ),
+    ToolSpec(
+        "just",
+        "Run repository-defined recipes and verification commands.",
+        "repository recipe task check test build command",
+    ),
+    ToolSpec(
+        "git",
+        "Inspect version-control status, history, branches, and diffs.",
+        "version control repository status history branch commit diff",
+    ),
+    ToolSpec(
+        "jq",
+        "Query and transform JSON from files or command output.",
+        "json query filter transform command output",
+    ),
+    ToolSpec(
+        "sqlite3",
+        "Query and maintain local SQLite databases.",
+        "sqlite database sql local query data",
+    ),
+    ToolSpec(
+        "duckdb",
+        "Analyze local tabular files and datasets with SQL.",
+        "duckdb database sql analytics parquet csv data local query",
+    ),
+    ToolSpec(
+        "ghmax",
+        "Search current GitHub code and repositories with bounded cached results.",
+        "github code repository remote implementation pattern search",
+        ("ghgrep",),
+    ),
+    ToolSpec(
+        "superweb",
+        "Search, fetch, batch, crawl, research, summarize cited sources, extract, browse dynamic pages, query official sources, and download current web artifacts.",
+        "web internet search fetch batch crawl research summarize cited scrape extract browser javascript challenge stealth api official source documentation current live download pdf contact email phone social toolbus mcp",
+        (
+            "superscrape",
+            "smart-fetch",
+            "hyperfetch",
+            "superfetch",
+            "supersearch",
+            "feeds-pull",
+            "batch-md-rs",
+            "bulkfetch",
+        ),
+    ),
+    ToolSpec(
+        "tilth",
+        "Read and search structured source code within a fixed token budget.",
+        "source code structured symbols read search context budget",
+    ),
+    ToolSpec(
+        "grepgod",
+        "Review diffs and source for correctness or security findings.",
+        "review audit diff code security findings regression",
+    ),
+    ToolSpec(
+        "synxp",
+        "Recall compact cross-project memory and prior decisions.",
+        "memory recall history prior decision cross project context",
+        ("synx",),
+    ),
+    ToolSpec(
+        "rtk",
+        "Compress noisy shell command output before it reaches model context.",
+        "compress shell command output log token noisy savings",
+    ),
+    ToolSpec(
+        "graphify",
+        "Query an existing repository code-structure graph.",
+        "repository code graph architecture relationship structure query",
+    ),
+    ToolSpec(
+        "codegraph",
+        "Find code callers, callees, dependencies, and impact.",
+        "code graph callers callees dependencies impact symbols",
+    ),
+    ToolSpec(
+        "freshdocs",
+        "Load current version-matched package and API documentation.",
+        "current package api documentation dependency version library",
+    ),
+    ToolSpec(
+        "run-guard",
+        "Bound long-running jobs by wall time, memory, and threads.",
+        "process long job timeout memory cpu gpu threads resource guard",
+    ),
+    ToolSpec(
+        "debugmaster",
+        "Diagnose failures with a bounded debugging workflow.",
+        "debug diagnose failure root cause regression",
+    ),
+    ToolSpec(
+        "superverify",
+        "Run focused verification and repository checks.",
+        "verify test checks validation repository",
+    ),
+    ToolSpec(
+        "repovista",
+        "Inspect a compact repository overview and inventory.",
+        "repository overview inventory architecture inspect",
+    ),
+    ToolSpec(
+        "agent-token-ledger",
+        "Account parent, child, retry, and fallback token usage.",
+        "agent token ledger cost child retry fallback usage",
+    ),
+    ToolSpec(
+        "agent-token-saver",
+        "Inspect or operate the full token-saving stack.",
+        "agent token save context stack routing doctor",
+    ),
+)
 
 
 @lru_cache(maxsize=8192)
@@ -226,6 +925,118 @@ def words(text: str) -> frozenset[str]:
         if lowered == "pytest":
             tokens.add("python")
     return frozenset(tokens)
+
+
+def tool_specs(*, include_unavailable: bool = False) -> list[tuple[ToolSpec, str]]:
+    """Return canonical tools and their live executable paths."""
+    found: list[tuple[ToolSpec, str]] = []
+    for spec in TOOL_SPECS:
+        path = shutil.which(spec.name)
+        if path is None:
+            for alias in spec.aliases:
+                path = shutil.which(alias)
+                if path:
+                    break
+        if path or include_unavailable:
+            found.append((spec, path or ""))
+    return found
+
+
+def canonical_tool_name(name: str) -> str | None:
+    normalized = Path(name.strip()).name.lower()
+    for spec in TOOL_SPECS:
+        if normalized == spec.name or normalized in spec.aliases:
+            return spec.name
+    return None
+
+
+def canonical_skill_name(name: str) -> str:
+    normalized = name.strip().lstrip("$").lower()
+    seen: set[str] = set()
+    while normalized in SKILL_ALIASES and normalized not in seen:
+        seen.add(normalized)
+        normalized = SKILL_ALIASES[normalized]
+    return normalized
+
+
+def explicit_tool_names(intent: str) -> list[str]:
+    """Resolve literal executable/alias mentions without fuzzy substrings."""
+    explicit: list[str] = []
+    for spec in TOOL_SPECS:
+        names = (spec.name, *spec.aliases)
+        if any(
+            re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", intent, re.I)
+            for name in names
+        ):
+            explicit.append(spec.name)
+    return explicit
+
+
+def tool_learned_adjustment(signal: ToolSignal | None) -> int:
+    """Bounded outcome tie-breaker; it can never create tool relevance."""
+    if signal is None:
+        return 0
+    familiarity = min(2, math.floor(math.log2(signal.used + 1)))
+    outcomes = signal.success + signal.failure
+    quality = (
+        round(6 * (signal.success - signal.failure) / (outcomes + 2))
+        if outcomes
+        else 0
+    )
+    latency_penalty = 0
+    if signal.used and signal.total_latency_ms:
+        average_ms = signal.total_latency_ms / signal.used
+        latency_penalty = -2 if average_ms >= 30_000 else (-1 if average_ms >= 10_000 else 0)
+    return max(-8, min(8, familiarity + quality + latency_penalty))
+
+
+def rank_tools(
+    intent: str,
+    usage_data: UsageData | None = None,
+    *,
+    include_unavailable: bool = False,
+) -> list[ToolRecommendation]:
+    """Rank installed CLIs independently from SKILL.md candidates."""
+    intent_words = words(intent)
+    literal = set(explicit_tool_names(intent))
+    ranked: list[ToolRecommendation] = []
+    for spec, path in tool_specs(include_unavailable=include_unavailable):
+        name_words = words(" ".join((spec.name, *spec.aliases)).replace("-", " "))
+        semantic_words = words(f"{spec.description} {spec.keywords}")
+        matched_name = intent_words & name_words
+        matched_semantic = intent_words & semantic_words
+        explicit = spec.name in literal
+        base = 100 if explicit else 7 * len(matched_name) + 3 * len(matched_semantic)
+        if base <= 0:
+            continue
+        adaptive = 0
+        if usage_data is not None:
+            adaptive = tool_learned_adjustment(usage_data.tool_signals.get(spec.name))
+        ranked.append(
+            ToolRecommendation(
+                name=spec.name,
+                aliases=spec.aliases,
+                path=path,
+                total_score=base + adaptive,
+                base_score=base,
+                adaptive_adjustment=adaptive,
+                matched_tokens=tuple(sorted(matched_name | matched_semantic)),
+                explicit=explicit,
+            )
+        )
+    return sorted(ranked, key=lambda item: (-item.total_score, item.name))
+
+
+def recommend_tools(
+    intent: str, usage_data: UsageData | None = None
+) -> list[ToolRecommendation]:
+    ranked = rank_tools(intent, usage_data)
+    if not ranked:
+        return []
+    if ranked[0].explicit:
+        return ranked[:1]
+    margin = ranked[0].total_score - (ranked[1].total_score if len(ranked) > 1 else 0)
+    return ranked[:1] if ranked[0].total_score >= 8 and margin >= 3 else []
 
 
 def favorites_file() -> Path:
@@ -326,10 +1137,16 @@ def common_roots(cwd: Path | None = None) -> list[Path]:
         cwd / ".agents" / "skills",
         cwd / ".claude" / "skills",
         cwd / ".codex" / "skills",
+        # Canonical global distribution. Keep this before host-specific bridges
+        # so a skill installed through Superskills has one authoritative path.
+        home / "superskills" / "skills",
         home / ".agents" / "skills",
         home / ".hermes" / "skills",
         home / ".claude" / "skills",
         home / ".claude" / "cts" / "skills",
+        # cts also stores skills directly under ~/.claude/cts/<name> (not only
+        # in cts/skills); scanning the parent recovers those (e.g. docker-patterns).
+        home / ".claude" / "cts",
         home / ".codex" / "skills",
         home / ".codex" / "plugins" / "cache",
         home / ".gg" / "skills",
@@ -341,6 +1158,23 @@ def common_roots(cwd: Path | None = None) -> list[Path]:
     for part in extra.split(os.pathsep):
         if part.strip():
             candidates.append(Path(part).expanduser())
+    # Hermes skills.external_dirs: the router must see the same catalog the
+    # Hermes session sees, otherwise skills routable in Hermes score zero here.
+    hermes_cfg = home / ".hermes" / "config.yaml"
+    try:
+        in_ext = False
+        for line in hermes_cfg.read_text(encoding="utf-8", errors="ignore").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("external_dirs:"):
+                in_ext = True
+                continue
+            if in_ext:
+                if stripped.startswith("- "):
+                    candidates.append(Path(stripped[2:].strip()).expanduser())
+                elif stripped and not line.startswith((" ", "\t")):
+                    in_ext = False
+    except OSError:
+        pass
     seen: set[str] = set()
     out: list[Path] = []
     for p in candidates:
@@ -428,6 +1262,115 @@ def scan(
     return skills
 
 
+def scan_all_copies(
+    roots: list[Path] | None = None, max_files_per_root: int = 1000
+) -> list[Skill]:
+    """Scan every active skill copy instead of hiding duplicate names."""
+    roots = roots or common_roots()
+    skills: list[Skill] = []
+    seen_paths: set[str] = set()
+    for root in roots:
+        for path in iter_skill_files(root, max_files_per_root):
+            try:
+                resolved_path = str(path.resolve())
+                name, desc, tags = parse_frontmatter(path)
+            except OSError:
+                continue
+            if resolved_path in seen_paths:
+                continue
+            seen_paths.add(resolved_path)
+            skills.append(
+                Skill(
+                    name=name,
+                    description=desc,
+                    keywords=tags,
+                    path=resolved_path,
+                    root=str(root),
+                )
+            )
+    return skills
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def skill_drift_report(
+    roots: list[Path] | None = None, *, include_rows: bool = False
+) -> dict[str, object]:
+    """Report active same-name copies whose bodies have drifted apart."""
+    copies = scan_all_copies(roots)
+    grouped: dict[str, list[dict[str, object]]] = {}
+    unreadable = 0
+    for skill in copies:
+        try:
+            digest = file_sha256(Path(skill.path))
+            size = Path(skill.path).stat().st_size
+        except OSError:
+            unreadable += 1
+            continue
+        grouped.setdefault(skill.name.lower(), []).append(
+            {
+                "path": skill.path,
+                "root": skill.root,
+                "sha256": digest,
+                "bytes": size,
+            }
+        )
+
+    rows: list[dict[str, object]] = []
+    for name, items in grouped.items():
+        if len(items) < 2:
+            continue
+        variants = len({str(item["sha256"]) for item in items})
+        rows.append(
+            {
+                "name": name,
+                "canonical_name": canonical_skill_name(name),
+                "copies": len(items),
+                "variants": variants,
+                "divergent": variants > 1,
+                "paths": sorted(str(item["path"]) for item in items),
+                "files": sorted(items, key=lambda item: str(item["path"])),
+            }
+        )
+    rows.sort(
+        key=lambda row: (
+            not bool(row["divergent"]),
+            -int(row["variants"]),
+            -int(row["copies"]),
+            str(row["name"]),
+        )
+    )
+    divergent = [row for row in rows if bool(row["divergent"])]
+    summary: dict[str, object] = {
+        "active_files": len(copies),
+        "unique_names": len(grouped),
+        "duplicate_groups": len(rows),
+        "divergent_groups": len(divergent),
+        "identical_copy_groups": len(rows) - len(divergent),
+        "divergent_files": sum(int(row["copies"]) for row in divergent),
+        "unreadable_files": unreadable,
+        "top_divergent": [
+            {
+                "name": row["name"],
+                "canonical_name": row["canonical_name"],
+                "copies": row["copies"],
+                "variants": row["variants"],
+                "paths": row["paths"],
+            }
+            for row in divergent[:20]
+        ],
+    }
+    if include_rows:
+        summary["rows"] = rows
+    return summary
+
+
 def atomic_write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
@@ -436,6 +1379,703 @@ def atomic_write_text(path: Path, text: str) -> None:
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def router_state_dir() -> Path:
+    configured = os.getenv("AGENT_SKILL_ROUTER_STATE_DIR", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    state_home = os.getenv("XDG_STATE_HOME", "").strip()
+    base = Path(state_home).expanduser() if state_home else Path.home() / ".local" / "state"
+    return base / "agent-skill-router"
+
+
+def route_events_file() -> Path:
+    configured = os.getenv("AGENT_SKILL_ROUTER_LOG", "").strip()
+    return Path(configured).expanduser() if configured else router_state_dir() / "events.jsonl"
+
+
+def feedback_state_file() -> Path:
+    return router_state_dir() / "learning.json"
+
+
+def telemetry_key_file() -> Path:
+    return router_state_dir() / ".telemetry-key"
+
+
+def telemetry_key() -> bytes:
+    path = telemetry_key_file()
+    try:
+        key = bytes.fromhex(path.read_text(encoding="ascii").strip())
+        if len(key) >= 32:
+            return key
+    except (OSError, ValueError):
+        pass
+    key = os.urandom(32)
+    atomic_write_text(path, key.hex() + "\n")
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+    return key
+
+
+def telemetry_enabled() -> bool:
+    return os.getenv("AGENT_SKILL_ROUTER_TELEMETRY", "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+
+
+def learning_enabled() -> bool:
+    return os.getenv("AGENT_SKILL_ROUTER_LEARNING", "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+
+
+def append_jsonl(path: Path, payload: dict[str, object]) -> None:
+    """Append one compact event without ever persisting raw prompt text."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        max_bytes = max(
+            65536, int(os.getenv("AGENT_SKILL_ROUTER_LOG_MAX_BYTES", "5242880"))
+        )
+    except ValueError:
+        max_bytes = 5242880
+    try:
+        if path.stat().st_size >= max_bytes:
+            backup = path.with_suffix(path.suffix + ".1")
+            backup.unlink(missing_ok=True)
+            os.replace(path, backup)
+    except OSError:
+        pass
+    encoded = (
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n"
+    ).encode("utf-8")
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    try:
+        os.write(descriptor, encoded)
+    finally:
+        os.close(descriptor)
+
+
+def signal_for(data: UsageData, name: str) -> UsageSignal:
+    normalized = name.strip().lower()
+    return data.signals.setdefault(normalized, UsageSignal())
+
+
+def canonical_skill_signal(data: UsageData, name: str) -> UsageSignal:
+    """Aggregate historical aliases so learning follows one responsibility."""
+    canonical = canonical_skill_name(name)
+    aggregate = UsageSignal()
+    for observed_name, signal in data.signals.items():
+        if canonical_skill_name(observed_name) != canonical:
+            continue
+        for field_name in (
+            "routed",
+            "applied",
+            "views",
+            "patches",
+            "success",
+            "failure",
+            "legacy_suggested",
+        ):
+            setattr(
+                aggregate,
+                field_name,
+                int(getattr(aggregate, field_name)) + int(getattr(signal, field_name)),
+            )
+        aggregate.last_activity = max(
+            aggregate.last_activity, signal.last_activity
+        )
+    return aggregate
+
+
+def tool_signal_for(data: UsageData, name: str) -> ToolSignal:
+    normalized = canonical_tool_name(name) or name.strip().lower()
+    return data.tool_signals.setdefault(normalized, ToolSignal())
+
+
+def event_skill_name(event: dict[str, object]) -> str:
+    raw_name = str(event.get("skill_name") or event.get("skill") or "").strip()
+    if raw_name.lower() not in GENERIC_SKILL_NAMES and raw_name:
+        return raw_name.lower()
+    raw_path = str(event.get("skill_path") or event.get("path") or "").strip()
+    if not raw_path:
+        return raw_name.lower()
+    path = Path(raw_path)
+    return (path.parent.name if path.stem.lower() in GENERIC_SKILL_NAMES else path.stem).lower()
+
+
+def update_last_activity(signal: UsageSignal | ToolSignal, value: object) -> None:
+    timestamp = str(value or "")
+    if timestamp and timestamp > signal.last_activity:
+        signal.last_activity = timestamp
+
+
+def read_jsonl_events(path: Path, data: UsageData) -> Iterable[dict[str, object]]:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return []
+    events: list[dict[str, object]] = []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except (TypeError, ValueError):
+            data.malformed += 1
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+        else:
+            data.malformed += 1
+    return events
+
+
+def load_usage_data(*, include_routes: bool = False) -> UsageData:
+    """Merge truthful usage sidecars without reading skill bodies or raw prompts."""
+    data = UsageData(signals={})
+    home = Path.home()
+
+    for path in (
+        home / ".gg" / "skill-usage.jsonl",
+        home / ".gg" / "skill-usage-archive.jsonl",
+    ):
+        for event in read_jsonl_events(path, data):
+            event_type = str(event.get("event") or "")
+            if event_type == "skill_loaded":
+                name = event_skill_name(event)
+                if name:
+                    signal = signal_for(data, name)
+                    signal.applied += 1
+                    update_last_activity(signal, event.get("ts"))
+            elif event_type == "prediction":
+                predicted = event.get("predicted")
+                if isinstance(predicted, str) and predicted:
+                    signal_for(data, predicted).legacy_suggested += 1
+
+    hermes_usage = home / ".hermes" / "skills" / ".usage.json"
+    try:
+        payload = json.loads(hermes_usage.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        payload = {}
+    records = payload.get("skills", payload) if isinstance(payload, dict) else {}
+    if isinstance(records, dict):
+        for name, record in records.items():
+            if not isinstance(record, dict):
+                continue
+            signal = signal_for(data, str(name))
+            signal.applied += int(record.get("use_count") or 0)
+            signal.views += int(record.get("view_count") or 0)
+            signal.patches += int(record.get("patch_count") or 0)
+            update_last_activity(
+                signal,
+                max(
+                    str(record.get("last_used_at") or ""),
+                    str(record.get("last_viewed_at") or ""),
+                    str(record.get("last_patched_at") or ""),
+                ),
+            )
+
+    try:
+        state = json.loads(feedback_state_file().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = {}
+    feedback_skills = state.get("skills", {}) if isinstance(state, dict) else {}
+    if isinstance(feedback_skills, dict):
+        for name, record in feedback_skills.items():
+            if not isinstance(record, dict):
+                continue
+            signal = signal_for(data, str(name))
+            signal.success += int(record.get("success") or 0)
+            signal.failure += int(record.get("failure") or 0)
+            update_last_activity(signal, record.get("updated_at"))
+
+    feedback_tools = state.get("tools", {}) if isinstance(state, dict) else {}
+    if isinstance(feedback_tools, dict):
+        for name, record in feedback_tools.items():
+            if not isinstance(record, dict):
+                continue
+            signal = tool_signal_for(data, str(name))
+            signal.used += int(record.get("used") or 0)
+            signal.success += int(record.get("success") or 0)
+            signal.failure += int(record.get("failure") or 0)
+            signal.total_latency_ms += int(record.get("total_latency_ms") or 0)
+            update_last_activity(signal, record.get("updated_at"))
+
+    if include_routes:
+        for event in read_jsonl_events(route_events_file(), data):
+            event_type = str(event.get("event") or "")
+            if event_type == "route":
+                data.route_events += 1
+                selected = event.get("selected")
+                if isinstance(selected, list):
+                    for name in selected:
+                        if isinstance(name, str) and name:
+                            signal = signal_for(data, name)
+                            signal.routed += 1
+                            update_last_activity(signal, event.get("ts"))
+                recommended_tools = event.get("recommended_tools")
+                if isinstance(recommended_tools, list):
+                    for name in recommended_tools:
+                        if isinstance(name, str) and canonical_tool_name(name):
+                            signal = tool_signal_for(data, name)
+                            signal.routed += 1
+                            update_last_activity(signal, event.get("ts"))
+            elif event_type == "feedback":
+                data.feedback_events += 1
+            elif event_type in {"tool_use", "tool_feedback"}:
+                data.tool_events += 1
+    return data
+
+
+def learned_adjustment(signal: UsageSignal | None) -> int:
+    """Bounded tie-breaker: use never creates relevance and feedback dominates."""
+    if signal is None:
+        return 0
+    familiarity = min(2, math.floor(math.log2(signal.applied + 1)))
+    total_feedback = signal.success + signal.failure
+    feedback = (
+        round(6 * (signal.success - signal.failure) / (total_feedback + 2))
+        if total_feedback
+        else 0
+    )
+    return max(-6, min(8, familiarity + feedback))
+
+
+def learning_observation(data: UsageData) -> dict[str, object]:
+    """Expose whether adaptive ranking has enough outcome evidence to trust."""
+    canonical_names = {canonical_skill_name(name) for name in data.signals}
+    skill_feedback = sum(
+        canonical_skill_signal(data, name).success
+        + canonical_skill_signal(data, name).failure
+        for name in canonical_names
+    )
+    tool_feedback = sum(
+        signal.success + signal.failure for signal in data.tool_signals.values()
+    )
+    last_activity = max(
+        (
+            signal.last_activity
+            for signal in (*data.signals.values(), *data.tool_signals.values())
+            if signal.last_activity
+        ),
+        default="",
+    )
+    outcome_events = skill_feedback + tool_feedback
+    if outcome_events < 5:
+        confidence = "low"
+        reason = "fewer than 5 observed success/failure outcomes"
+    elif outcome_events < 20 or data.route_events < 20:
+        confidence = "medium"
+        reason = "useful tie-breaker evidence, but observation window is still small"
+    else:
+        confidence = "high"
+        reason = "at least 20 outcomes and 20 recorded routes"
+    return {
+        "confidence": confidence,
+        "reason": reason,
+        "route_events": data.route_events,
+        "skill_feedback_outcomes": skill_feedback,
+        "tool_feedback_outcomes": tool_feedback,
+        "tool_events": data.tool_events,
+        "last_activity": last_activity,
+        "raw_prompts_stored": False,
+        "raw_arguments_stored": False,
+        "ranking_contract": "deterministic relevance first; adaptive adjustment is bounded to a tie-breaker",
+    }
+
+
+def record_route(
+    result: RouteResult, *, strict: bool, source: str = "cli"
+) -> str:
+    route_id = hashlib.sha256(
+        f"{time.time_ns()}:{os.getpid()}:{result.intent}".encode("utf-8")
+    ).hexdigest()[:16]
+    if not telemetry_enabled():
+        return route_id
+    append_jsonl(
+        route_events_file(),
+        {
+            "schema": TELEMETRY_SCHEMA,
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "event": "route",
+            "route_id": route_id,
+            "intent_hash": hmac.new(
+                telemetry_key(), result.intent.encode("utf-8"), hashlib.sha256
+            ).hexdigest()[:16],
+            "selected": [skill.name for skill in result.selected],
+            "recommended_tools": [tool.name for tool in result.recommended_tools],
+            "decision": result.decision,
+            "top_score": result.top_score,
+            "margin": result.margin,
+            "strict": strict,
+            "scanned": result.scanned,
+            "catalog_source": result.catalog_source,
+            "source": source,
+        },
+    )
+    return route_id
+
+
+def record_feedback(skill_name: str, outcome: str, route_id: str = "") -> dict[str, object]:
+    normalized = canonical_skill_name(skill_name)
+    if outcome not in {"success", "failure"}:
+        raise ValueError("outcome must be success or failure")
+    try:
+        state = json.loads(feedback_state_file().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = {}
+    if not isinstance(state, dict) or state.get("schema") not in {None, TELEMETRY_SCHEMA}:
+        state = {}
+    skills = state.get("skills")
+    if not isinstance(skills, dict):
+        skills = {}
+        state["skills"] = skills
+    record = skills.get(normalized)
+    if not isinstance(record, dict):
+        record = {"success": 0, "failure": 0}
+        skills[normalized] = record
+    record[outcome] = int(record.get(outcome) or 0) + 1
+    record["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    state["schema"] = TELEMETRY_SCHEMA
+    atomic_write_text(
+        feedback_state_file(),
+        json.dumps(state, ensure_ascii=False, separators=(",", ":")) + "\n",
+    )
+    event = {
+        "schema": TELEMETRY_SCHEMA,
+        "ts": record["updated_at"],
+        "event": "feedback",
+        "skill": normalized,
+        "outcome": outcome,
+        "route_id": route_id,
+    }
+    if telemetry_enabled():
+        append_jsonl(route_events_file(), event)
+    return event
+
+
+def record_tool_usage(
+    tool_name: str,
+    outcome: str = "unknown",
+    latency_ms: int = 0,
+    *,
+    event_name: str = "tool_use",
+) -> dict[str, object]:
+    """Record only canonical name/outcome/latency, never command args or output."""
+    normalized = canonical_tool_name(tool_name)
+    if normalized is None:
+        raise ValueError(f"unknown tool: {tool_name}")
+    if outcome not in {"success", "failure", "unknown"}:
+        raise ValueError("outcome must be success, failure, or unknown")
+    latency_ms = max(0, min(int(latency_ms), 3_600_000))
+    try:
+        state = json.loads(feedback_state_file().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = {}
+    if not isinstance(state, dict) or state.get("schema") not in {None, TELEMETRY_SCHEMA}:
+        state = {}
+    tools = state.get("tools")
+    if not isinstance(tools, dict):
+        tools = {}
+        state["tools"] = tools
+    record = tools.get(normalized)
+    if not isinstance(record, dict):
+        record = {
+            "used": 0,
+            "success": 0,
+            "failure": 0,
+            "total_latency_ms": 0,
+        }
+        tools[normalized] = record
+    record["used"] = int(record.get("used") or 0) + 1
+    if outcome in {"success", "failure"}:
+        record[outcome] = int(record.get(outcome) or 0) + 1
+    record["total_latency_ms"] = int(record.get("total_latency_ms") or 0) + latency_ms
+    record["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    state["schema"] = TELEMETRY_SCHEMA
+    atomic_write_text(
+        feedback_state_file(),
+        json.dumps(state, ensure_ascii=False, separators=(",", ":")) + "\n",
+    )
+    event = {
+        "schema": TELEMETRY_SCHEMA,
+        "ts": record["updated_at"],
+        "event": event_name,
+        "tool": normalized,
+        "outcome": outcome,
+        "latency_ms": latency_ms,
+    }
+    if telemetry_enabled():
+        append_jsonl(route_events_file(), event)
+    return event
+
+
+def _hook_command(payload: dict[str, object]) -> str:
+    for container_name in ("tool_input", "input", "arguments"):
+        container = payload.get(container_name)
+        if isinstance(container, dict):
+            for key in ("command", "cmd"):
+                value = container.get(key)
+                if isinstance(value, str):
+                    return value
+    for key in ("command", "cmd"):
+        value = payload.get(key)
+        if isinstance(value, str):
+            return value
+    return ""
+
+
+def observed_tool_names(command: str) -> list[str]:
+    """Read executable positions only; quoted arguments cannot become tools."""
+    if not command.strip():
+        return []
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|\n")
+        lexer.whitespace = " \t\r"
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+    except ValueError:
+        return []
+    segments: list[list[str]] = [[]]
+    for token in tokens:
+        if token and all(character in ";|&\n" for character in token):
+            if segments[-1]:
+                segments.append([])
+        else:
+            segments[-1].append(token)
+    observed: list[str] = []
+    for segment in segments:
+        if not segment:
+            continue
+        index = 0
+        while index < len(segment) and (
+            "=" in segment[index] and not segment[index].startswith(("/", "./"))
+        ):
+            index += 1
+        while index < len(segment) and Path(segment[index]).name in {
+            "command",
+            "env",
+            "nice",
+            "nohup",
+            "sudo",
+        }:
+            index += 1
+        if index >= len(segment):
+            continue
+        first = Path(segment[index]).name
+        canonical = canonical_tool_name(first)
+        if canonical and canonical not in observed:
+            observed.append(canonical)
+        if canonical == "rtk":
+            index += 1
+            if index < len(segment) and segment[index] == "proxy":
+                index += 1
+            if index < len(segment):
+                wrapped = canonical_tool_name(Path(segment[index]).name)
+                if wrapped and wrapped not in observed:
+                    observed.append(wrapped)
+    return observed
+
+
+def _hook_outcome(payload: dict[str, object]) -> str:
+    candidates: list[object] = [payload]
+    for key in ("tool_response", "response", "result", "output", "extra"):
+        value = payload.get(key)
+        if isinstance(value, dict):
+            candidates.append(value)
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        for key in ("exit_code", "exitCode", "code"):
+            value = candidate.get(key)
+            if isinstance(value, int):
+                return "success" if value == 0 else "failure"
+        value = str(candidate.get("status") or "").lower()
+        if value in {"success", "succeeded", "completed", "ok"}:
+            return "success"
+        if value in {"failure", "failed", "error"}:
+            return "failure"
+    return "unknown"
+
+
+def _hook_latency_ms(payload: dict[str, object]) -> int:
+    candidates: list[dict[str, object]] = [payload]
+    for key in ("tool_response", "response", "result", "extra"):
+        value = payload.get(key)
+        if isinstance(value, dict):
+            candidates.append(value)
+    for candidate in candidates:
+        for key in ("latency_ms", "duration_ms", "elapsed_ms"):
+            value = candidate.get(key)
+            if isinstance(value, (int, float)):
+                return max(0, min(round(value), 3_600_000))
+    return 0
+
+
+def observe_hook_payload(payload: dict[str, object]) -> list[dict[str, object]]:
+    outcome = _hook_outcome(payload)
+    latency_ms = _hook_latency_ms(payload)
+    return [
+        record_tool_usage(name, outcome, latency_ms)
+        for name in observed_tool_names(_hook_command(payload))
+    ]
+
+
+HOOK_MATCHER = r"Bash|Shell|shell|shell_command|exec_command|functions\.exec_command"
+
+
+def hook_command() -> str:
+    return str(Path.home() / ".local" / "bin" / "si") + " observe"
+
+
+def hook_config_path(target: str) -> Path:
+    if target == "codex":
+        return Path.home() / ".codex" / "hooks.json"
+    if target == "claude":
+        return Path.home() / ".claude" / "settings.json"
+    if target == "hermes":
+        return Path.home() / ".hermes" / "config.yaml"
+    raise ValueError(f"unknown hook target: {target}")
+
+
+def hook_has_observer(target: str) -> bool:
+    path = hook_config_path(target)
+    if target == "hermes":
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            return False
+        return (
+            re.search(r"(?m)^hooks:\s*$", text) is not None
+            and re.search(r"(?m)^  post_tool_call:\s*$", text) is not None
+            and f'command: {json.dumps(hook_command())}' in text
+        )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    post = payload.get("hooks", {}).get("PostToolUse", []) if isinstance(payload, dict) else []
+    if not isinstance(post, list):
+        return False
+    for entry in post:
+        hooks = entry.get("hooks", []) if isinstance(entry, dict) else []
+        if isinstance(hooks, list) and any(
+            isinstance(hook, dict) and hook.get("command") == hook_command()
+            for hook in hooks
+        ):
+            return True
+    return False
+
+
+def install_hermes_hook(dry_run: bool = False) -> dict[str, object]:
+    """Append the native Hermes post_tool_call hook without a YAML dependency."""
+    path = hook_config_path("hermes")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        text = ""
+    command_line = f"      command: {json.dumps(hook_command())}\n"
+    if command_line.strip() in text:
+        return {"target": "hermes", "path": str(path), "changed": False, "dry_run": dry_run}
+    entry = (
+        '    - matcher: "terminal|shell|bash"\n'
+        + command_line
+        + "      timeout: 3\n"
+    )
+    null_hooks = re.search(r"(?m)^hooks:\s*(?:null|~)\s*$", text)
+    if null_hooks:
+        updated = text[: null_hooks.start()] + "hooks:\n  post_tool_call:\n" + entry + text[null_hooks.end() :]
+    else:
+        lines = text.splitlines(keepends=True)
+        hooks_index = next(
+            (index for index, line in enumerate(lines) if re.match(r"^hooks:\s*$", line)),
+            None,
+        )
+        if hooks_index is None:
+            separator = "" if not text or text.endswith("\n") else "\n"
+            updated = text + separator + "hooks:\n  post_tool_call:\n" + entry
+        else:
+            block_end = next(
+                (
+                    index
+                    for index in range(hooks_index + 1, len(lines))
+                    if lines[index].strip() and not lines[index].startswith((" ", "\t", "#"))
+                ),
+                len(lines),
+            )
+            post_index = next(
+                (
+                    index
+                    for index in range(hooks_index + 1, block_end)
+                    if re.match(r"^  post_tool_call:\s*$", lines[index])
+                ),
+                None,
+            )
+            insert_at = post_index + 1 if post_index is not None else block_end
+            addition = entry if post_index is not None else "  post_tool_call:\n" + entry
+            lines.insert(insert_at, addition)
+            updated = "".join(lines)
+    if not dry_run:
+        atomic_write_text(path, updated)
+    return {"target": "hermes", "path": str(path), "changed": True, "dry_run": dry_run}
+
+
+def install_hooks(target: str = "all", dry_run: bool = False) -> list[dict[str, object]]:
+    names = ["codex", "claude", "hermes"] if target == "all" else [target]
+    results = []
+    for name in names:
+        if name == "hermes":
+            results.append(install_hermes_hook(dry_run=dry_run))
+            continue
+        path = hook_config_path(name)
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            payload = {}
+        except ValueError as exc:
+            raise ValueError(f"invalid JSON in {path}: {exc}") from exc
+        if not isinstance(payload, dict):
+            raise ValueError(f"expected JSON object in {path}")
+        hooks = payload.setdefault("hooks", {})
+        if not isinstance(hooks, dict):
+            raise ValueError(f"expected hooks object in {path}")
+        post = hooks.setdefault("PostToolUse", [])
+        if not isinstance(post, list):
+            raise ValueError(f"expected PostToolUse list in {path}")
+        present = any(
+            isinstance(entry, dict)
+            and any(
+                isinstance(hook, dict) and hook.get("command") == hook_command()
+                for hook in entry.get("hooks", [])
+                if isinstance(entry.get("hooks"), list)
+            )
+            for entry in post
+        )
+        changed = not present
+        if changed:
+            post.append(
+                {
+                    "matcher": HOOK_MATCHER,
+                    "hooks": [
+                        {"type": "command", "command": hook_command(), "timeout": 3}
+                    ],
+                }
+            )
+            if not dry_run:
+                atomic_write_text(path, json.dumps(payload, indent=2) + "\n")
+        results.append(
+            {"target": name, "path": str(path), "changed": changed, "dry_run": dry_run}
+        )
+    return results
 
 
 def write_skill_index(
@@ -564,12 +2204,29 @@ def contains_bounded_phrase(text: str, phrase: str) -> bool:
         start = index + 1
 
 
+def _ordered_tokens(text: str) -> list[str]:
+    """Normalized tokens in original order (for bigram phrase matching)."""
+    out: list[str] = []
+    for raw in WORD_RE.findall(text or ""):
+        lowered = raw.lower()
+        if lowered in STOPWORDS:
+            continue
+        out.append(TOKEN_NORMALIZATION.get(lowered, lowered))
+    return out
+
+
+def _intent_bigrams(text: str) -> list[str]:
+    tokens = [t for t in _ordered_tokens(text) if len(t) > 2]
+    return [f"{a} {b}" for a, b in zip(tokens, tokens[1:]) if a != b]
+
+
 def score(
     intent: str,
     skill: Skill,
     doc_freq: Counter | None = None,
     favorites: dict[str, int] | None = None,
 ) -> int:
+    tw = tuned_weights()
     iw = words(intent)
     nw = words(skill.name.replace("-", " "))
     dw = words(skill.description)
@@ -577,18 +2234,32 @@ def score(
     if not iw:
         return 0
     s = 0.0
+    # Keyword-stuffed mega-descriptions must not outrank precise short ones:
+    # damp the description contribution linearly past desc_damp_start words.
+    desc_scale = 1.0
+    if len(dw) > tw["desc_damp_start"]:
+        desc_scale = max(tw["desc_damp_floor"], tw["desc_damp_start"] / len(dw))
     for token in iw & nw:
-        s += 8 * rarity(token, doc_freq)
+        s += tw["name_w"] * rarity(token, doc_freq)
     for token in iw & dw:
-        s += 3 * rarity(token, doc_freq)
+        s += tw["desc_w"] * desc_scale * rarity(token, doc_freq)
     for token in iw & kw:
-        s += 6 * rarity(token, doc_freq)
+        s += tw["kw_w"] * rarity(token, doc_freq)
     # Coverage: a skill matching several intent tokens must outrank a skill
     # that hit one lucky rare token (e.g. "builder" in an unrelated name).
     matched = (iw & nw) | (iw & dw) | (iw & kw)
     if len(matched) > 1:
-        s += 4 * (len(matched) - 1)
+        s += tw["coverage_w"] * (len(matched) - 1)
     lowered = intent.lower()
+    # Phrase-level evidence: "pull request", "core web", "fine tuning" are far
+    # more specific than their unigrams. Name hits beat description hits.
+    name_hay = skill.name.lower().replace("-", " ")
+    desc_hay = skill.description.lower()
+    for bigram in _intent_bigrams(intent):
+        if bigram in name_hay:
+            s += tw["bigram_name"]
+        elif bigram in desc_hay:
+            s += tw["bigram_desc"]
     skill_phrase = skill.name.lower()
     # A generic one-word platform name such as "codex" is usually context,
     # not an explicit request to delegate to that skill. Bare names and
@@ -600,8 +2271,12 @@ def score(
             s += 1 * rarity(token, doc_freq)
     is_software_dev = "/software-development/" in skill.path
     skill_words = nw | dw | kw
-    test_debug_intent = iw & {"debug", "test", "fail"}
-    if is_software_dev and test_debug_intent & skill_words:
+    debug_failure_intent = iw & {"debug", "fail"}
+    platform_test_intent = "test" in iw and bool(iw & PLATFORM_TOKENS)
+    if is_software_dev and (
+        debug_failure_intent & skill_words
+        or (platform_test_intent and "test" in skill_words)
+    ):
         s += 20
     if is_software_dev and "python" in iw and "python" in (nw | dw | kw):
         s += 12
@@ -629,6 +2304,23 @@ def score(
             s += 4 * team_coverage
         elif skill_words & MEETING_TOKENS:
             s -= 12
+    # Control/orchestration skills (2026-07-24): abstract multi-step intents that
+    # ask for closed-loop / goal / verify / orchestrate workflows must strongly
+    # prefer control skills (agent-loop, omnigoal, verification-loop, master-check,
+    # goalmaster). Require the candidate itself to cover the control domain.
+    control_intent = iw & CONTROL_TOKENS
+    if len(control_intent) >= 2:
+        control_coverage = len(skill_words & CONTROL_TOKENS)
+        if control_coverage >= 2:
+            s += 15 + 2 * (control_coverage - 2)
+        elif control_coverage == 0 and not (skill_words & AGENT_TEAM_TOKENS):
+            s -= 8
+    # Name-level control match (2026-07-24): a skill whose NAME contains a control
+    # token from the intent (e.g. "verification-loop" for "... verification gate")
+    # is the canonical pick. Description-stuffed skills must not outrank it.
+    name_control = iw & nw & CONTROL_TOKENS
+    if name_control:
+        s += 18 * len(name_control)
     skill_platforms = (nw | dw | kw) & PLATFORM_TOKENS
     requested_platforms = iw & PLATFORM_TOKENS
     if (
@@ -644,6 +2336,57 @@ def score(
     return round(s)
 
 
+def rank_candidates(
+    intent: str,
+    skills: list[Skill],
+    favorites: dict[str, int] | None = None,
+    usage_data: UsageData | None = None,
+) -> list[tuple[int, int, int, Skill]]:
+    """Return total, deterministic base, adaptive tie-breaker, and skill."""
+    available_names = {skill.name.lower() for skill in skills}
+    routable = [
+        skill
+        for skill in skills
+        if skill.name.lower() not in AUTO_ROUTE_EXCLUDED
+        or (
+            skill.name.lower() in SKILL_ALIASES
+            and canonical_skill_name(skill.name.lower()) not in available_names
+        )
+    ]
+    frequencies = doc_frequencies(routable)
+    ranked: list[tuple[int, int, int, Skill]] = []
+    for skill in routable:
+        base = score(intent, skill, frequencies, favorites)
+        adaptive = 0
+        if base > 0 and usage_data is not None:
+            adaptive = learned_adjustment(
+                canonical_skill_signal(usage_data, skill.name)
+            )
+        ranked.append((base + adaptive, base, adaptive, skill))
+    ranked.sort(
+        key=lambda item: (
+            -item[0],
+            0 if favorites and item[3].name.lower() in favorites else 1,
+            item[3].name,
+        )
+    )
+    intent_words = words(intent)
+    if intent_words & SECURITY_TOKENS and intent_words & REVIEW_TOKENS:
+        review_ranked = []
+        for item in ranked:
+            skill = item[3]
+            skill_words = (
+                words(skill.name.replace("-", " "))
+                | words(skill.description)
+                | words(skill.keywords)
+            )
+            if skill_words & REVIEW_TOKENS and skill_words & SECURITY_TOKENS:
+                review_ranked.append(item)
+        if review_ranked:
+            ranked = review_ranked
+    return ranked
+
+
 def route(
     intent: str,
     max_selected: int = DEFAULT_MAX_SELECTED,
@@ -651,28 +2394,32 @@ def route(
     strict: bool = False,
     refresh_index: bool = False,
     catalog_data: Catalog | None = None,
+    usage_data: UsageData | None = None,
 ) -> RouteResult:
     max_selected = selection_limit(max_selected)
     catalog_data = catalog_data or load_catalog(roots, refresh=refresh_index)
     skills = catalog_data.skills
     root_paths = catalog_data.roots
     favorites = load_favorites()
-    by_name = {
-        skill.name.lower(): skill for skill in skills if skill.name != SKILL_NAME
-    }
+    if usage_data is None and learning_enabled():
+        usage_data = load_usage_data()
+    recommended_tools = recommend_tools(intent, usage_data)
+    by_name = {skill.name.lower(): skill for skill in skills}
     explicit_names = [name.lower() for name in EXPLICIT_SKILL_RE.findall(intent)]
     bare_name = intent.strip().lower()
-    if not explicit_names and bare_name in by_name:
+    if not explicit_names and (
+        bare_name in by_name or canonical_skill_name(bare_name) in by_name
+    ):
         explicit_names = [bare_name]
     if explicit_names:
         selected = []
         for name in explicit_names:
-            skill = by_name.get(name)
+            skill = by_name.get(canonical_skill_name(name)) or by_name.get(name)
             if skill is not None and skill not in selected:
                 selected.append(skill)
         selected = selected[:max_selected]
         block = render_router_block(
-            intent, selected, len(skills), root_paths, favorites
+            intent, selected, len(skills), root_paths, favorites, recommended_tools
         )
         return RouteResult(
             intent=intent,
@@ -681,10 +2428,33 @@ def route(
             roots=[str(p) for p in root_paths],
             router_block=block,
             catalog_source=catalog_data.source,
+            decision="explicit",
+            recommended_tools=recommended_tools,
+        )
+    if explicit_tool_names(intent):
+        block = render_router_block(
+            intent, [], len(skills), root_paths, favorites, recommended_tools
+        )
+        return RouteResult(
+            intent=intent,
+            selected=[],
+            scanned=len(skills),
+            roots=[str(p) for p in root_paths],
+            router_block=block,
+            catalog_source=catalog_data.source,
+            decision="explicit-tool",
+            recommended_tools=recommended_tools,
         )
     intent_words = words(intent)
-    if not (intent_words & WORKFLOW_TOKENS):
-        block = render_router_block(intent, [], len(skills), root_paths, favorites)
+    if (
+        recommended_tools
+        and recommended_tools[0].base_score >= 12
+        and intent_words & DIRECT_TOOL_TOKENS
+        and not intent_words & MATERIAL_TASK_TOKENS
+    ):
+        block = render_router_block(
+            intent, [], len(skills), root_paths, favorites, recommended_tools
+        )
         return RouteResult(
             intent=intent,
             selected=[],
@@ -692,9 +2462,65 @@ def route(
             roots=[str(p) for p in root_paths],
             router_block=block,
             catalog_source=catalog_data.source,
+            decision="tool-selected",
+            recommended_tools=recommended_tools,
+        )
+    if not (intent_words & WORKFLOW_TOKENS):
+        # Fallback (2026-07-23): the verb allowlist used to hard-drop requests
+        # like "send a telegram message" or "train a lora" even when a skill
+        # matched strongly. A confident deterministic content match now beats
+        # the missing verb; only weak/ambiguous intents stay zero-skill.
+        tw = tuned_weights()
+        fb_ranked = rank_candidates(intent, skills, favorites, usage_data)
+        fb_positive = [item for item in fb_ranked if item[0] > 0]
+        fb_top = fb_positive[0][0] if fb_positive else 0
+        fb_margin = (
+            fb_top - fb_positive[1][0] if len(fb_positive) > 1 else fb_top
+        )
+        if (
+            fb_positive
+            and fb_top >= tw["no_workflow_min_score"]
+            and fb_margin >= tw["no_workflow_min_margin"]
+        ):
+            fb_floor = max(4, round(fb_top * 0.33))
+            selected = [
+                skill
+                for points, _b, _a, skill in fb_positive
+                if points >= fb_floor
+            ][:max_selected]
+            block = render_router_block(
+                intent, selected, len(skills), root_paths, favorites,
+                recommended_tools,
+            )
+            return RouteResult(
+                intent=intent,
+                selected=selected,
+                scanned=len(skills),
+                roots=[str(p) for p in root_paths],
+                router_block=block,
+                catalog_source=catalog_data.source,
+                decision="content-fallback",
+                top_score=fb_top,
+                margin=fb_margin,
+                recommended_tools=recommended_tools,
+            )
+        block = render_router_block(
+            intent, [], len(skills), root_paths, favorites, recommended_tools
+        )
+        return RouteResult(
+            intent=intent,
+            selected=[],
+            scanned=len(skills),
+            roots=[str(p) for p in root_paths],
+            router_block=block,
+            catalog_source=catalog_data.source,
+            decision="no-workflow",
+            recommended_tools=recommended_tools,
         )
     if "test" in intent_words and intent_words <= PLAIN_TEST_TOKENS:
-        block = render_router_block(intent, [], len(skills), root_paths, favorites)
+        block = render_router_block(
+            intent, [], len(skills), root_paths, favorites, recommended_tools
+        )
         return RouteResult(
             intent=intent,
             selected=[],
@@ -702,42 +2528,47 @@ def route(
             roots=[str(p) for p in root_paths],
             router_block=block,
             catalog_source=catalog_data.source,
+            decision="plain-test",
+            recommended_tools=recommended_tools,
         )
-    routable_skills = [
-        skill for skill in skills if skill.name not in AUTO_ROUTE_EXCLUDED
-    ]
-    doc_freq = doc_frequencies(routable_skills)
-    ranked = sorted(
-        ((score(intent, s, doc_freq, favorites), s) for s in routable_skills),
-        key=lambda x: (
-            -x[0],
-            0 if x[1].name.lower() in favorites else 1,
-            x[1].name,
-        ),
-    )
-    if intent_words & SECURITY_TOKENS and intent_words & REVIEW_TOKENS:
-        review_ranked = []
-        for points, skill in ranked:
-            skill_words = (
-                words(skill.name.replace("-", " "))
-                | words(skill.description)
-                | words(skill.keywords)
-            )
-            if skill_words & REVIEW_TOKENS and skill_words & SECURITY_TOKENS:
-                review_ranked.append((points, skill))
-        if review_ranked:
-            ranked = review_ranked
-    positive = [(points, skill) for points, skill in ranked if points > 0]
+    ranked = rank_candidates(intent, skills, favorites, usage_data)
+    positive = [item for item in ranked if item[0] > 0]
+    top_score = positive[0][0] if positive else 0
+    margin = top_score - positive[1][0] if len(positive) > 1 else top_score
+    decision = "selected" if positive else "no-match"
     if strict:
-        if not positive or positive[0][0] < MIN_STRICT_SCORE:
+        if not positive or top_score < MIN_STRICT_SCORE:
             positive = []
-        elif len(positive) > 1 and positive[0][0] - positive[1][0] < MIN_STRICT_MARGIN:
-            positive = []
+            decision = "low-confidence" if top_score else "no-match"
+        elif len(positive) > 1 and margin < MIN_STRICT_MARGIN:
+            # Control-skill exception (2026-07-24): when the top-2 candidates are
+            # both control/orchestration skills (agent-loop, omnigoal,
+            # verification-loop, master-check, goalmaster), a narrow margin is
+            # expected — they share vocabulary. Pick the top one rather than
+            # bailing to "ambiguous", so --max 1 --strict returns a control skill.
+            top2 = [positive[0][3], positive[1][3]]
+            top2_control = all(
+                (words(s.name.replace("-", " ")) | words(s.description) | words(s.keywords))
+                & CONTROL_TOKENS
+                and len(
+                    (words(s.name.replace("-", " ")) | words(s.description) | words(s.keywords))
+                    & CONTROL_TOKENS
+                )
+                >= 2
+                for s in top2
+            )
+            if top2_control:
+                decision = "selected"
+            else:
+                positive = []
+                decision = "ambiguous"
     confidence_floor = max(4, round(positive[0][0] * 0.33)) if positive else 0
-    selected = [skill for points, skill in positive if points >= confidence_floor][
+    selected = [skill for points, _base, _adaptive, skill in positive if points >= confidence_floor][
         :max_selected
     ]
-    block = render_router_block(intent, selected, len(skills), root_paths, favorites)
+    block = render_router_block(
+        intent, selected, len(skills), root_paths, favorites, recommended_tools
+    )
     return RouteResult(
         intent=intent,
         selected=selected,
@@ -745,6 +2576,10 @@ def route(
         roots=[str(p) for p in root_paths],
         router_block=block,
         catalog_source=catalog_data.source,
+        decision=decision,
+        top_score=top_score,
+        margin=margin,
+        recommended_tools=recommended_tools,
     )
 
 
@@ -754,6 +2589,7 @@ def render_router_block(
     scanned: int,
     roots: list[Path],
     favorites: dict[str, int] | None = None,
+    recommended_tools: list[ToolRecommendation] | None = None,
 ) -> str:
     lines = [f"router: {SKILL_NAME}", f"intent: {intent}", f"scanned: {scanned}"]
     if selected:
@@ -763,6 +2599,12 @@ def render_router_block(
             lines.append(f"- {s.name}{star}: {s.description[:160]} ({s.path})")
     else:
         lines.append("load: []")
+    if recommended_tools:
+        lines.append("tools:")
+        for tool in recommended_tools:
+            lines.append(f"- {tool.name}: {tool.path}")
+    else:
+        lines.append("tools: []")
     return "\n".join(lines)
 
 
@@ -799,6 +2641,78 @@ def bench(
     }
 
 
+def default_eval_set_path() -> Path:
+    return Path.home() / ".local/state/agent-skill-router/eval-set.json"
+
+
+def quality_bench(
+    eval_path: Path | None = None,
+    *,
+    max_selected: int = 3,
+    refresh_index: bool = False,
+) -> dict[str, object]:
+    """Labeled routing-quality benchmark: P@1, P@3, empty-rate, latency.
+
+    Eval file format: [{"q": "...", "accept": ["skill-a", "skill-b"]}, ...]
+    An empty accept list means the correct answer is zero skills.
+    """
+    import time as _time
+
+    path = eval_path or default_eval_set_path()
+    cases = json.loads(path.read_text(encoding="utf-8"))
+    catalog_data = load_catalog(refresh=refresh_index)
+    usage_data = load_usage_data() if learning_enabled() else None
+    p1 = p3 = empty_correct = 0
+    latencies: list[float] = []
+    rows = []
+    for case in cases:
+        query = case["q"]
+        accept = [a.lower() for a in case.get("accept", [])]
+        t0 = _time.perf_counter()
+        rr = route(
+            query,
+            max_selected=max_selected,
+            catalog_data=catalog_data,
+            usage_data=usage_data,
+        )
+        latencies.append((_time.perf_counter() - t0) * 1000)
+        names = [s.name.lower() for s in rr.selected]
+        if not accept:
+            hit1 = hit3 = names == []
+            empty_correct += hit1
+        else:
+            hit1 = bool(names) and names[0] in accept
+            hit3 = any(n in accept for n in names[:3])
+        p1 += hit1
+        p3 += hit3
+        rows.append(
+            {
+                "q": query,
+                "accept": accept,
+                "got": names[:3],
+                "decision": rr.decision,
+                "p1": bool(hit1),
+                "p3": bool(hit3),
+            }
+        )
+    n = max(1, len(cases))
+    lat_sorted = sorted(latencies)
+    return {
+        "eval_path": str(path),
+        "cases": len(cases),
+        "precision_at_1": round(p1 / n, 4),
+        "precision_at_3": round(p3 / n, 4),
+        "hits_p1": p1,
+        "hits_p3": p3,
+        "latency_ms": {
+            "median": round(lat_sorted[len(lat_sorted) // 2], 1),
+            "max": round(max(latencies), 1),
+        },
+        "weights": tuned_weights(),
+        "rows": rows,
+    }
+
+
 def find_skills(
     query: str, skills: list[Skill], limit: int = 8
 ) -> list[tuple[int, Skill]]:
@@ -824,6 +2738,20 @@ def resolve_skill(name: str, skills: list[Skill]) -> Skill | None:
     return next((skill for skill in skills if skill.name.lower() == normalized), None)
 
 
+def skill_alias_report(catalog_data: Catalog) -> list[dict[str, object]]:
+    """Return the compatibility map without reading any skill body."""
+    names = {skill.name.lower() for skill in catalog_data.skills}
+    return [
+        {
+            "alias": alias,
+            "canonical": canonical_skill_name(alias),
+            "alias_present": alias in names,
+            "canonical_present": canonical_skill_name(alias) in names,
+        }
+        for alias in sorted(SKILL_ALIASES)
+    ]
+
+
 def catalog_summary(catalog_data: Catalog) -> dict[str, object]:
     return {
         "status": catalog_data.source,
@@ -832,6 +2760,316 @@ def catalog_summary(catalog_data: Catalog) -> dict[str, object]:
         "index_path": str(catalog_data.index_path),
         "tsv_path": str(skill_index_tsv_file(catalog_data.index_path)),
         "ttl_seconds": skill_index_ttl_seconds(),
+    }
+
+
+def explain_route(
+    intent: str,
+    *,
+    strict: bool = True,
+    limit: int = 5,
+    refresh_index: bool = False,
+) -> dict[str, object]:
+    catalog_data = load_catalog(refresh=refresh_index)
+    usage_data = load_usage_data()
+    favorites = load_favorites()
+    result = route(
+        intent,
+        strict=strict,
+        catalog_data=catalog_data,
+        usage_data=usage_data,
+    )
+    candidates = []
+    intent_words = words(intent)
+    for total, base, adaptive, skill in rank_candidates(
+        intent, catalog_data.skills, favorites, usage_data
+    )[: max(1, min(limit, 20))]:
+        skill_words = (
+            words(skill.name.replace("-", " "))
+            | words(skill.description)
+            | words(skill.keywords)
+        )
+        candidates.append(
+            {
+                "name": skill.name,
+                "total_score": total,
+                "base_score": base,
+                "adaptive_adjustment": adaptive,
+                "matched_tokens": sorted(intent_words & skill_words),
+                "path": skill.path,
+            }
+        )
+    tool_candidates = [
+        asdict(candidate)
+        for candidate in rank_tools(intent, usage_data)[: max(1, min(limit, 20))]
+    ]
+    return {
+        "route": asdict(result),
+        "candidates": candidates,
+        "tool_candidates": tool_candidates,
+    }
+
+
+def tool_usage_report(
+    usage_data: UsageData, *, include_rows: bool = False
+) -> dict[str, object]:
+    rows = []
+    for spec, path in tool_specs(include_unavailable=True):
+        signal = usage_data.tool_signals.get(spec.name, ToolSignal())
+        rows.append(
+            {
+                "name": spec.name,
+                "aliases": list(spec.aliases),
+                "available": bool(path),
+                "path": path,
+                "routed": signal.routed,
+                "used": signal.used,
+                "success": signal.success,
+                "failure": signal.failure,
+                "success_rate_pct": round(
+                    signal.success / (signal.success + signal.failure) * 100, 2
+                )
+                if signal.success + signal.failure
+                else None,
+                "average_latency_ms": round(signal.total_latency_ms / signal.used)
+                if signal.used
+                else 0,
+                "adaptive_adjustment": tool_learned_adjustment(signal),
+                "last_activity": signal.last_activity,
+            }
+        )
+    summary: dict[str, object] = {
+        "tools": len(rows),
+        "tools_available": sum(bool(row["available"]) for row in rows),
+        "tools_used": sum(int(row["used"]) > 0 for row in rows),
+        "total_uses": sum(int(row["used"]) for row in rows),
+        "total_success": sum(int(row["success"]) for row in rows),
+        "total_failure": sum(int(row["failure"]) for row in rows),
+        "tool_events": usage_data.tool_events,
+        "raw_commands_stored": False,
+        "raw_arguments_stored": False,
+        "learning_observation": learning_observation(usage_data),
+        "top_used": sorted(
+            (row for row in rows if int(row["used"])),
+            key=lambda row: (-int(row["used"]), str(row["name"])),
+        )[:20],
+    }
+    if include_rows:
+        summary["rows"] = rows
+    return summary
+
+
+def render_tool_usage_tsv(rows: list[dict[str, object]]) -> str:
+    fields = (
+        "name",
+        "aliases",
+        "available",
+        "path",
+        "routed",
+        "used",
+        "success",
+        "failure",
+        "success_rate_pct",
+        "average_latency_ms",
+        "adaptive_adjustment",
+        "last_activity",
+    )
+    lines = ["\t".join(fields)]
+    for row in rows:
+        values = dict(row)
+        values["aliases"] = ",".join(str(value) for value in row.get("aliases", []))
+        lines.append(
+            "\t".join(
+                str(values.get(field, "")).replace("\t", " ").replace("\n", " ")
+                for field in fields
+            )
+        )
+    return "\n".join(lines) + "\n"
+
+
+def usage_report(
+    catalog_data: Catalog, usage_data: UsageData, *, include_rows: bool = False
+) -> dict[str, object]:
+    rows = []
+    catalog_names = {skill.name.lower() for skill in catalog_data.skills}
+    for skill in sorted(catalog_data.skills, key=lambda item: item.name.lower()):
+        signal = usage_data.signals.get(skill.name.lower(), UsageSignal())
+        rows.append(
+            {
+                "name": skill.name,
+                "canonical_name": canonical_skill_name(skill.name),
+                "routed": signal.routed,
+                "applied": signal.applied,
+                "views": signal.views,
+                "patches": signal.patches,
+                "success": signal.success,
+                "failure": signal.failure,
+                "legacy_suggested": signal.legacy_suggested,
+                "adaptive_adjustment": learned_adjustment(signal),
+                "last_activity": signal.last_activity,
+                "path": skill.path,
+            }
+        )
+    canonical_records: dict[str, dict[str, object]] = {}
+    for observed_name, signal in usage_data.signals.items():
+        canonical = canonical_skill_name(observed_name)
+        record = canonical_records.setdefault(
+            canonical,
+            {
+                "name": canonical,
+                "aliases": set(),
+                "routed": 0,
+                "applied": 0,
+                "views": 0,
+                "patches": 0,
+                "success": 0,
+                "failure": 0,
+                "legacy_suggested": 0,
+                "last_activity": "",
+            },
+        )
+        if observed_name != canonical:
+            record["aliases"].add(observed_name)
+        for field_name in (
+            "routed",
+            "applied",
+            "views",
+            "patches",
+            "success",
+            "failure",
+            "legacy_suggested",
+        ):
+            record[field_name] = int(record[field_name]) + int(
+                getattr(signal, field_name)
+            )
+        record["last_activity"] = max(
+            str(record["last_activity"]), signal.last_activity
+        )
+    canonical_rows = []
+    for record in canonical_records.values():
+        record["aliases"] = sorted(record["aliases"])
+        aggregate_signal = UsageSignal(
+            applied=int(record["applied"]),
+            success=int(record["success"]),
+            failure=int(record["failure"]),
+        )
+        record["adaptive_adjustment"] = learned_adjustment(aggregate_signal)
+        canonical_rows.append(record)
+    canonical_rows.sort(key=lambda row: str(row["name"]))
+    used = [row for row in rows if int(row["applied"]) > 0]
+    routed = [row for row in rows if int(row["routed"]) > 0]
+    summary: dict[str, object] = {
+        "skills": len(rows),
+        "skills_applied": len(used),
+        "skills_routed": len(routed),
+        "total_applied": sum(int(row["applied"]) for row in canonical_rows),
+        "total_routes": usage_data.route_events,
+        "total_feedback": sum(
+            int(row["success"]) + int(row["failure"]) for row in canonical_rows
+        ),
+        "feedback_events": usage_data.feedback_events,
+        "malformed_events": usage_data.malformed,
+        "unknown_observed_skills": sorted(
+            name
+            for name in usage_data.signals
+            if name not in catalog_names
+            and name not in SKILL_ALIASES
+            and canonical_skill_name(name) not in catalog_names
+        ),
+        "telemetry_path": str(route_events_file()),
+        "learning_path": str(feedback_state_file()),
+        "raw_prompts_stored": False,
+        "learning_observation": learning_observation(usage_data),
+        "top_applied": sorted(
+            used, key=lambda row: (-int(row["applied"]), str(row["name"]))
+        )[:20],
+        "top_routed": sorted(
+            routed, key=lambda row: (-int(row["routed"]), str(row["name"]))
+        )[:20],
+        "canonical_usage": canonical_rows,
+        "top_canonical_applied": sorted(
+            (row for row in canonical_rows if int(row["applied"])),
+            key=lambda row: (-int(row["applied"]), str(row["name"])),
+        )[:20],
+    }
+    if include_rows:
+        summary["rows"] = rows
+    return summary
+
+
+def render_usage_tsv(rows: list[dict[str, object]]) -> str:
+    fields = (
+        "name",
+        "canonical_name",
+        "routed",
+        "applied",
+        "views",
+        "patches",
+        "success",
+        "failure",
+        "legacy_suggested",
+        "adaptive_adjustment",
+        "last_activity",
+        "path",
+    )
+    lines = ["\t".join(fields)]
+    for row in rows:
+        lines.append(
+            "\t".join(
+                str(row.get(field, "")).replace("\t", " ").replace("\n", " ")
+                for field in fields
+            )
+        )
+    return "\n".join(lines) + "\n"
+
+
+def doctor_report(refresh_index: bool = False) -> dict[str, object]:
+    catalog_data = load_catalog(refresh=refresh_index)
+    usage_data = load_usage_data(include_routes=True)
+    report = usage_report(catalog_data, usage_data)
+    tools = tool_usage_report(usage_data)
+    drift = skill_drift_report(catalog_data.roots)
+    return {
+        "ok": usage_data.malformed == 0,
+        "catalog": catalog_summary(catalog_data),
+        "telemetry_enabled": telemetry_enabled(),
+        "learning_enabled": learning_enabled(),
+        "raw_prompts_stored": False,
+        "raw_commands_stored": False,
+        "route_events": report["total_routes"],
+        "applied_events": report["total_applied"],
+        "feedback_events": report["total_feedback"],
+        "usage_coverage_pct": round(
+            (int(report["skills_applied"]) / int(report["skills"]) * 100), 2
+        )
+        if report["skills"]
+        else 0.0,
+        "malformed_events": usage_data.malformed,
+        "missing_descriptions": [
+            skill.name for skill in catalog_data.skills if not skill.description.strip()
+        ],
+        "unknown_observed_skills": report["unknown_observed_skills"],
+        "tools": tools["tools"],
+        "tools_available": tools["tools_available"],
+        "tools_used": tools["tools_used"],
+        "tool_events": tools["tool_events"],
+        "learning_observation": report["learning_observation"],
+        "drift": drift,
+        "hook_status": [
+            {
+                "target": target,
+                "path": str(hook_config_path(target)),
+                "installed": hook_has_observer(target),
+            }
+            for target in ("codex", "claude", "hermes")
+        ],
+        "auto_route_excluded": sorted(AUTO_ROUTE_EXCLUDED),
+        "skill_aliases": skill_alias_report(catalog_data),
+        "canonical_skills_used": sum(
+            int(row["applied"]) > 0 for row in report["canonical_usage"]
+        ),
+        "telemetry_path": str(route_events_file()),
+        "learning_path": str(feedback_state_file()),
     }
 
 
@@ -902,6 +3140,52 @@ def install(target: str, dry_run: bool = False) -> list[str]:
     return written
 
 
+def run_jury(*, strict: bool = False, refresh_index: bool = False) -> dict:
+    """Run a jury of test intents and cross-check that expected control skills
+    are reachable. Each case declares an intent, a max-selected budget, and a
+    set of acceptable skills (any-of). The jury passes when at least one
+    acceptable skill appears in the selected set.
+
+    This is the automated cross-check the user asked for: a deterministic
+    battery that flags regressions in control-skill routing (agent-loop,
+    omnigoal, verification-loop, master-check, goalmaster) alongside domain
+    sanity checks (python debug, telegram, transcribe).
+    """
+    cases = JURY_CASES
+    results = []
+    passed = 0
+    for case in cases:
+        rr = route(
+            case["intent"],
+            max_selected=selection_limit(case["max"]),
+            strict=case.get("strict", strict),
+            refresh_index=refresh_index,
+        )
+        got = [s.name for s in rr.selected]
+        expected = case["expected"]
+        ok = any(name in expected for name in got) if expected else bool(got)
+        if ok:
+            passed += 1
+        results.append(
+            {
+                "intent": case["intent"],
+                "max": case["max"],
+                "strict": case.get("strict", strict),
+                "expected": list(expected),
+                "got": got,
+                "decision": rr.decision,
+                "top_score": rr.top_score,
+                "passed": ok,
+            }
+        )
+    return {
+        "ok": passed == len(cases),
+        "passed": passed,
+        "total": len(cases),
+        "cases": results,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Adaptive token-saving skill router")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -912,9 +3196,19 @@ def main() -> int:
     p_route.add_argument("--strict", action="store_true")
     p_route.add_argument("--refresh-index", action="store_true")
     p_bench = sub.add_parser("bench")
-    p_bench.add_argument("intent")
+    p_bench.add_argument("intent", nargs="?", default="")
     p_bench.add_argument("--max", type=int, default=DEFAULT_MAX_SELECTED)
     p_bench.add_argument("--refresh-index", action="store_true")
+    p_bench.add_argument(
+        "--quality",
+        action="store_true",
+        help="run the labeled routing-quality benchmark instead of a token bench",
+    )
+    p_bench.add_argument(
+        "--eval-file",
+        default="",
+        help="path to a labeled eval set JSON (default: ~/.local/state/agent-skill-router/eval-set.json)",
+    )
     p_install = sub.add_parser("install")
     p_install.add_argument(
         "--target",
@@ -935,7 +3229,54 @@ def main() -> int:
     p_resolve = sub.add_parser("resolve")
     p_resolve.add_argument("name")
     p_resolve.add_argument("--json", action="store_true")
+    p_resolve.add_argument("--canonical", action="store_true")
     p_resolve.add_argument("--refresh-index", action="store_true")
+    p_aliases = sub.add_parser("aliases")
+    p_aliases.add_argument("--json", action="store_true")
+    p_aliases.add_argument("--refresh-index", action="store_true")
+    p_drift = sub.add_parser("drift")
+    p_drift.add_argument("--all", action="store_true")
+    p_drift.add_argument("--json", action="store_true")
+    p_drift.add_argument("--output")
+    p_explain = sub.add_parser("explain")
+    p_explain.add_argument("intent")
+    p_explain.add_argument("--limit", type=int, default=5)
+    p_explain.add_argument("--no-strict", action="store_true")
+    p_explain.add_argument("--refresh-index", action="store_true")
+    p_stats = sub.add_parser("stats")
+    p_stats.add_argument("--all", action="store_true")
+    p_stats.add_argument("--json", action="store_true")
+    p_stats.add_argument("--output")
+    p_stats.add_argument("--refresh-index", action="store_true")
+    p_feedback = sub.add_parser("feedback")
+    p_feedback.add_argument("name")
+    p_feedback.add_argument("outcome", choices=["success", "failure"])
+    p_feedback.add_argument("--route-id", default="")
+    p_tools = sub.add_parser("tools")
+    p_tools.add_argument("--all", action="store_true")
+    p_tools.add_argument("--json", action="store_true")
+    p_tools.add_argument("--output")
+    p_tool_feedback = sub.add_parser("tool-feedback")
+    p_tool_feedback.add_argument("name")
+    p_tool_feedback.add_argument("outcome", choices=["success", "failure"])
+    p_tool_feedback.add_argument("--latency-ms", type=int, default=0)
+    p_inventory = sub.add_parser("inventory")
+    p_inventory.add_argument("--output")
+    p_inventory.add_argument("--refresh-index", action="store_true")
+    sub.add_parser("observe")
+    p_install_hooks = sub.add_parser("install-hooks")
+    p_install_hooks.add_argument(
+        "--target", default="all", choices=["all", "codex", "claude", "hermes"]
+    )
+    p_install_hooks.add_argument("--dry-run", action="store_true")
+    sub.add_parser("hook-status")
+    p_doctor = sub.add_parser("doctor")
+    p_doctor.add_argument("--json", action="store_true")
+    p_doctor.add_argument("--refresh-index", action="store_true")
+    p_jury = sub.add_parser("jury")
+    p_jury.add_argument("--strict", action="store_true")
+    p_jury.add_argument("--json", action="store_true")
+    p_jury.add_argument("--refresh-index", action="store_true")
     args = parser.parse_args()
 
     if args.cmd == "route":
@@ -945,12 +3286,32 @@ def main() -> int:
             strict=args.strict,
             refresh_index=args.refresh_index,
         )
+        route_id = record_route(rr, strict=args.strict)
         if args.json:
-            print(json.dumps(asdict(rr), indent=2, ensure_ascii=False))
+            payload = asdict(rr)
+            payload["route_id"] = route_id
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
         else:
             print(rr.router_block)
         return 0
     if args.cmd == "bench":
+        if args.quality:
+            eval_path = Path(args.eval_file).expanduser() if args.eval_file else None
+            print(
+                json.dumps(
+                    quality_bench(
+                        eval_path,
+                        max_selected=selection_limit(max(args.max, 3)),
+                        refresh_index=args.refresh_index,
+                    ),
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
+            return 0
+        if not args.intent:
+            print("bench requires an intent (or --quality)", file=sys.stderr)
+            return 2
         print(
             json.dumps(
                 bench(
@@ -1010,7 +3371,8 @@ def main() -> int:
         return 0 if matches else 1
     if args.cmd == "resolve":
         catalog_data = load_catalog(refresh=args.refresh_index)
-        skill = resolve_skill(args.name, catalog_data.skills)
+        requested_name = canonical_skill_name(args.name) if args.canonical else args.name
+        skill = resolve_skill(requested_name, catalog_data.skills)
         if skill is None:
             return 1
         if args.json:
@@ -1018,6 +3380,190 @@ def main() -> int:
         else:
             print(skill.path)
         return 0
+    if args.cmd == "aliases":
+        catalog_data = load_catalog(refresh=args.refresh_index)
+        aliases = skill_alias_report(catalog_data)
+        if args.json:
+            print(json.dumps(aliases, indent=2, ensure_ascii=False))
+        else:
+            for item in aliases:
+                print(
+                    f"{item['alias']}\t{item['canonical']}\t"
+                    f"alias={'yes' if item['alias_present'] else 'archived'}\t"
+                    f"canonical={'yes' if item['canonical_present'] else 'missing'}"
+                )
+        return 0
+    if args.cmd == "drift":
+        report = skill_drift_report(include_rows=args.all)
+        if args.json:
+            rendered = json.dumps(report, indent=2, ensure_ascii=False) + "\n"
+        else:
+            lines = [
+                f"{report['active_files']} active files\t"
+                f"{report['unique_names']} names\t"
+                f"{report['duplicate_groups']} duplicate groups\t"
+                f"{report['divergent_groups']} divergent groups"
+            ]
+            if args.all:
+                for row in report["rows"]:
+                    lines.append(
+                        f"{row['name']}\t{row['copies']} copies\t"
+                        f"{row['variants']} variants\t"
+                        f"{'divergent' if row['divergent'] else 'identical'}"
+                    )
+            rendered = "\n".join(lines) + "\n"
+        if args.output:
+            atomic_write_text(Path(args.output).expanduser(), rendered)
+            print(str(Path(args.output).expanduser()))
+        else:
+            print(rendered, end="")
+        return 0
+    if args.cmd == "explain":
+        print(
+            json.dumps(
+                explain_route(
+                    args.intent,
+                    strict=not args.no_strict,
+                    limit=args.limit,
+                    refresh_index=args.refresh_index,
+                ),
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return 0
+    if args.cmd == "stats":
+        catalog_data = load_catalog(refresh=args.refresh_index)
+        report = usage_report(
+            catalog_data, load_usage_data(include_routes=True), include_rows=args.all
+        )
+        if args.all and not args.json:
+            rendered = render_usage_tsv(report["rows"])
+        else:
+            rendered = json.dumps(report, indent=2, ensure_ascii=False) + "\n"
+        if args.output:
+            atomic_write_text(Path(args.output).expanduser(), rendered)
+            print(str(Path(args.output).expanduser()))
+        else:
+            print(rendered, end="")
+        return 0
+    if args.cmd == "feedback":
+        catalog_data = load_catalog()
+        skill = resolve_skill(args.name, catalog_data.skills)
+        if skill is None:
+            return 1
+        print(
+            json.dumps(
+                record_feedback(skill.name, args.outcome, args.route_id),
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return 0
+    if args.cmd == "tools":
+        report = tool_usage_report(
+            load_usage_data(include_routes=True), include_rows=args.all
+        )
+        if args.all and not args.json:
+            rendered = render_tool_usage_tsv(report["rows"])
+        else:
+            rendered = json.dumps(report, indent=2, ensure_ascii=False) + "\n"
+        if args.output:
+            atomic_write_text(Path(args.output).expanduser(), rendered)
+            print(str(Path(args.output).expanduser()))
+        else:
+            print(rendered, end="")
+        return 0
+    if args.cmd == "tool-feedback":
+        try:
+            event = record_tool_usage(
+                args.name,
+                args.outcome,
+                args.latency_ms,
+                event_name="tool_feedback",
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
+        print(json.dumps(event, indent=2, ensure_ascii=False))
+        return 0
+    if args.cmd == "inventory":
+        catalog_data = load_catalog(refresh=args.refresh_index)
+        usage_data = load_usage_data(include_routes=True)
+        rendered = json.dumps(
+            {
+                "skills": usage_report(catalog_data, usage_data, include_rows=True),
+                "tools": tool_usage_report(usage_data, include_rows=True),
+                "aliases": skill_alias_report(catalog_data),
+                "drift": skill_drift_report(catalog_data.roots, include_rows=True),
+            },
+            indent=2,
+            ensure_ascii=False,
+        ) + "\n"
+        if args.output:
+            atomic_write_text(Path(args.output).expanduser(), rendered)
+            print(str(Path(args.output).expanduser()))
+        else:
+            print(rendered, end="")
+        return 0
+    if args.cmd == "observe":
+        try:
+            payload = json.load(sys.stdin)
+        except (TypeError, ValueError):
+            return 0
+        if isinstance(payload, dict):
+            observe_hook_payload(payload)
+        return 0
+    if args.cmd == "install-hooks":
+        try:
+            result = install_hooks(args.target, dry_run=args.dry_run)
+        except ValueError as exc:
+            parser.error(str(exc))
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 0
+    if args.cmd == "hook-status":
+        status = [
+            {
+                "target": target,
+                "path": str(hook_config_path(target)),
+                "installed": hook_has_observer(target),
+            }
+            for target in ("codex", "claude", "hermes")
+        ]
+        print(json.dumps(status, indent=2, ensure_ascii=False))
+        return 0 if all(item["installed"] for item in status) else 1
+    if args.cmd == "doctor":
+        report = doctor_report(refresh_index=args.refresh_index)
+        if args.json:
+            print(json.dumps(report, indent=2, ensure_ascii=False))
+        else:
+            print(
+                f"{'ok' if report['ok'] else 'warning'}\t"
+                f"{report['catalog']['skills']} skills\t"
+                f"{report['route_events']} routes\t"
+                f"{report['applied_events']} applied\t"
+                f"{report['feedback_events']} feedback"
+            )
+        return 0 if report["ok"] else 1
+    if args.cmd == "jury":
+        report = run_jury(strict=args.strict, refresh_index=args.refresh_index)
+        if args.json:
+            print(json.dumps(report, indent=2, ensure_ascii=False))
+        else:
+            lines = [
+                f"jury: {report['passed']}/{report['total']} passed",
+                f"verdict: {'PASS' if report['ok'] else 'FAIL'}",
+            ]
+            for case in report["cases"]:
+                mark = "PASS" if case["passed"] else "FAIL"
+                got = ",".join(case["got"]) or "-"
+                exp = ",".join(case["expected"])
+                lines.append(
+                    f"  [{mark}] {case['intent']!r}\n"
+                    f"      expected one of: {exp}\n"
+                    f"      got top-{case['max']}: {got}  (decision={case['decision']}, top={case['top_score']})"
+                )
+            print("\n".join(lines))
+        return 0 if report["ok"] else 1
     return 2
 
 

@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -362,6 +363,9 @@ class AgentTokenSaverTests(unittest.TestCase):
                 root / "metareview" / "runs", "snapshot-skill", "Audit snapshot only."
             )
             write_skill(root / "_archive", "archived-skill", "Archived skill only.")
+            write_skill(root / "backups", "backup-skill", "Backup only.")
+            write_skill(root / "_skill-packages", "package-skill", "Package only.")
+            write_skill(root / "related-skills", "related-skill", "Reference only.")
 
             names = [skill.name for skill in mod.scan([root])]
 
@@ -613,6 +617,544 @@ class AgentTokenSaverTests(unittest.TestCase):
 
             self.assertEqual(result.selected[0].name, "token-stack-operations")
 
+    def test_legacy_skill_autopilot_is_explicit_only(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(
+                root,
+                "skill-autopilot",
+                "Self-training skill router with usage logging and better selection.",
+                "skills, router, logging, selection",
+            )
+            write_skill(
+                root,
+                "agent-token-saver",
+                "Optimize skill routing, usage logging, and token context safely.",
+                "skills, router, logging, tokens",
+            )
+
+            automatic = mod.route(
+                "build smart skill router logging and improve selection",
+                roots=[root],
+                usage_data=mod.UsageData(signals={}),
+            )
+            explicit = mod.route("$skill-autopilot", roots=[root])
+
+            self.assertEqual(automatic.selected[0].name, "agent-token-saver")
+            self.assertEqual(explicit.selected[0].name, "skill-autopilot")
+
+    def test_german_workflow_verbs_reach_routing_gate(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(
+                root,
+                "agent-token-saver",
+                "Optimize skill router logging, usage, and selection.",
+                "skills, router, logging, tokens",
+            )
+            write_skill(
+                root,
+                "friction-audit",
+                "Optimieren von UX Friction und Zeitverlust in Workflows.",
+            )
+            favorites = Path(td) / "favorites.txt"
+            favorites.write_text("friction-audit=6\n", encoding="utf-8")
+
+            with patch.dict(
+                os.environ, {"AGENT_SKILL_FAVORITES_FILE": str(favorites)}
+            ):
+                result = mod.route(
+                    "wie kannst du selbstlernend sein und skills automatisch "
+                    "optimieren bei nutzung auch vom skill router",
+                    roots=[root],
+                    strict=True,
+                    usage_data=mod.UsageData(signals={}),
+                )
+
+            self.assertEqual(result.decision, "selected")
+            self.assertEqual(result.selected[0].name, "agent-token-saver")
+
+    def test_adaptive_feedback_breaks_relevant_tie_without_creating_relevance(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(root, "alpha-api", "Build and deploy a Python API.")
+            write_skill(root, "beta-api", "Build and deploy a Python API.")
+            write_skill(root, "sales-copy", "Write high-converting sales copy.")
+            usage = mod.UsageData(
+                signals={
+                    "alpha-api": mod.UsageSignal(failure=4),
+                    "beta-api": mod.UsageSignal(success=4),
+                    "sales-copy": mod.UsageSignal(success=100, applied=100),
+                }
+            )
+
+            result = mod.route(
+                "build and deploy a Python API",
+                roots=[root],
+                strict=True,
+                usage_data=usage,
+            )
+
+            self.assertEqual(result.selected[0].name, "beta-api")
+            ranked = mod.rank_candidates(
+                "build and deploy a Python API", mod.scan([root]), {}, usage
+            )
+            sales = next(item for item in ranked if item[3].name == "sales-copy")
+            self.assertEqual(sales[0], 0)
+            self.assertEqual(sales[2], 0)
+
+    def test_route_telemetry_hashes_prompt_and_stats_merge_real_loads(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            root = home / "skills"
+            state = home / "state"
+            write_skill(root, "python-testing", "Debug failing Python tests.")
+            write_skill(root, "copywriting", "Write sales copy.")
+            usage_log = home / ".gg" / "skill-usage.jsonl"
+            usage_log.parent.mkdir(parents=True)
+            usage_log.write_text(
+                '{"event":"skill_loaded","skill_name":"SKILL",'
+                '"skill_path":"/tmp/python-testing/SKILL.md","ts":"2026-07-14T10:00:00"}\n',
+                encoding="utf-8",
+            )
+            secret_prompt = "debug failing pytest for private customer acme"
+            env = {
+                "HOME": td,
+                "AGENT_SKILL_ROUTER_STATE_DIR": str(state),
+            }
+            with patch.dict(os.environ, env):
+                result = mod.route(
+                    secret_prompt,
+                    roots=[root],
+                    usage_data=mod.UsageData(signals={}),
+                )
+                mod.record_route(result, strict=True)
+                data = mod.load_usage_data(include_routes=True)
+                catalog = mod.load_catalog([root], use_index=False)
+                report = mod.usage_report(catalog, data, include_rows=True)
+                raw_log = mod.route_events_file().read_text(encoding="utf-8")
+
+            self.assertNotIn(secret_prompt, raw_log)
+            self.assertIn("intent_hash", raw_log)
+            rows = {row["name"]: row for row in report["rows"]}
+            self.assertEqual(rows["python-testing"]["routed"], 1)
+            self.assertEqual(rows["python-testing"]["applied"], 1)
+            self.assertEqual(rows["copywriting"]["applied"], 0)
+            self.assertFalse(report["raw_prompts_stored"])
+
+    def test_alias_usage_rolls_up_without_double_counting(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(
+                root,
+                "agent-token-saver-skill-router",
+                "Select zero or one skill for a task.",
+            )
+            catalog = mod.load_catalog([root], use_index=False)
+            data = mod.UsageData(
+                signals={
+                    "agent-token-saver-skill-router": mod.UsageSignal(applied=2),
+                    "just-in-time-skill-router": mod.UsageSignal(applied=12),
+                    "allskills": mod.UsageSignal(applied=1),
+                }
+            )
+
+            report = mod.usage_report(catalog, data, include_rows=True)
+            canonical = {
+                row["name"]: row for row in report["canonical_usage"]
+            }
+
+            self.assertEqual(report["total_applied"], 15)
+            self.assertEqual(
+                canonical["agent-token-saver-skill-router"]["applied"], 15
+            )
+            self.assertEqual(
+                canonical["agent-token-saver-skill-router"]["aliases"],
+                ["allskills", "just-in-time-skill-router"],
+            )
+            self.assertEqual(
+                canonical["agent-token-saver-skill-router"]["adaptive_adjustment"],
+                2,
+            )
+            self.assertNotIn(
+                "just-in-time-skill-router", report["unknown_observed_skills"]
+            )
+
+    def test_aliases_are_explicit_only_and_canonical_resolution_is_available(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(
+                root,
+                "skill-portfolio-governance",
+                "Audit weekly skill health reports and internal ranking.",
+            )
+            catalog = mod.load_catalog([root], use_index=False)
+
+            alias_rows = mod.skill_alias_report(catalog)
+            governance = mod.route(
+                "weekly skill health report and internal ranking",
+                roots=[root],
+                strict=False,
+                usage_data=mod.UsageData(signals={}),
+            )
+
+            self.assertEqual(mod.canonical_skill_name("$sm"), mod.SKILL_NAME)
+            self.assertEqual(governance.selected[0].name, "skill-portfolio-governance")
+            self.assertNotIn(
+                "agent-efficiency-orchestrator",
+                {row["alias"] for row in alias_rows},
+            )
+
+    def test_web_suite_component_keeps_exact_identity(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(
+                root,
+                "superweb",
+                "Search, fetch, crawl, research, and extract current web pages.",
+            )
+            write_skill(
+                root,
+                "superscrape",
+                "Legacy compatibility shim for web fetching.",
+            )
+
+            result = mod.route(
+                "$superscrape",
+                roots=[root],
+                usage_data=mod.UsageData(signals={}),
+            )
+
+            self.assertEqual([skill.name for skill in result.selected], ["superscrape"])
+            self.assertEqual(mod.canonical_skill_name("scrape-deep"), "scrape-deep")
+            self.assertEqual(mod.canonical_skill_name("scrapedeep"), "scrape-deep")
+
+    def test_web_suite_component_history_stays_independent(self):
+        data = mod.UsageData(
+            signals={
+                "superweb": mod.UsageSignal(applied=1),
+                "superscrape": mod.UsageSignal(applied=7, success=4),
+                "stealth-research": mod.UsageSignal(failure=1),
+            }
+        )
+
+        signal = mod.canonical_skill_signal(data, "superweb")
+
+        self.assertEqual(signal.applied, 1)
+        self.assertEqual((signal.success, signal.failure), (0, 0))
+        superscrape = mod.canonical_skill_signal(data, "superscrape")
+        self.assertEqual(superscrape.applied, 7)
+        self.assertEqual((superscrape.success, superscrape.failure), (4, 0))
+
+    def test_german_skill_improvement_prompt_reaches_governance(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(
+                root,
+                "skill-portfolio-governance",
+                "Audit skill usage, overlap, internal ranking, merge, and cleanup candidates.",
+                "skills, improvement, ranking, cleanup",
+            )
+
+            result = mod.route(
+                "überlege welche skills verbessert und vorsichtig aufgeräumt werden müssen",
+                roots=[root],
+                strict=True,
+                usage_data=mod.UsageData(signals={}),
+            )
+
+            self.assertEqual(result.decision, "selected")
+            self.assertEqual(result.selected[0].name, "skill-portfolio-governance")
+
+    def test_portfolio_verification_does_not_route_to_tdd(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(
+                root,
+                "skill-portfolio-governance",
+                "Audit skill usage, merge, update, cleanup, and drift candidates.",
+                "skill, merge, update, cleanup, drift",
+            )
+            write_skill(
+                root / "software-development",
+                "test-driven-development",
+                "Test code with red-green-refactor.",
+                "test, tdd, code",
+            )
+
+            result = mod.route(
+                "aktualisiere alle skills, prüfe merge-kandidaten und räume vorsichtig auf",
+                roots=[root],
+                strict=True,
+                usage_data=mod.UsageData(signals={}),
+            )
+
+            self.assertEqual(result.decision, "selected")
+            self.assertEqual(result.selected[0].name, "skill-portfolio-governance")
+
+    def test_agent_efficiency_orchestrator_is_independent_and_routable(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(
+                root,
+                "agent-efficiency-orchestrator",
+                "Optimize agent tool workflows for lower tokens latency compute and coordination cost.",
+            )
+            write_skill(
+                root,
+                "metareview",
+                "Review code diffs for correctness and grounded defects.",
+            )
+            catalog = mod.load_catalog([root], use_index=False)
+
+            result = mod.route(
+                "optimize agent tool workflow token latency and coordination cost",
+                roots=[root],
+                strict=False,
+                usage_data=mod.UsageData(signals={}),
+            )
+
+            self.assertEqual(
+                mod.canonical_skill_name("agent-efficiency-orchestrator"),
+                "agent-efficiency-orchestrator",
+            )
+            self.assertEqual(
+                mod.resolve_skill("agent-efficiency-orchestrator", catalog.skills).name,
+                "agent-efficiency-orchestrator",
+            )
+            self.assertEqual(result.selected[0].name, "agent-efficiency-orchestrator")
+
+    def test_restored_meta_skills_keep_independent_responsibilities(self):
+        self.assertEqual(
+            mod.canonical_skill_name("meta-skill-evolution-diary-weekly"),
+            "meta-skill-evolution-diary-weekly",
+        )
+        self.assertEqual(
+            mod.canonical_skill_name("meta-skill-token-efficiency-optimizer"),
+            "meta-skill-token-efficiency-optimizer",
+        )
+        self.assertEqual(
+            mod.canonical_skill_name("skill-autopilot"),
+            "skill-autopilot",
+        )
+        self.assertNotIn(
+            "meta-skill-evolution-diary-weekly", mod.AUTO_ROUTE_EXCLUDED
+        )
+        self.assertNotIn(
+            "meta-skill-token-efficiency-optimizer", mod.AUTO_ROUTE_EXCLUDED
+        )
+        self.assertIn("skill-autopilot", mod.AUTO_ROUTE_EXCLUDED)
+
+    def test_feedback_is_compact_and_changes_bounded_adjustment(self):
+        with tempfile.TemporaryDirectory() as td:
+            env = {"HOME": td, "AGENT_SKILL_ROUTER_STATE_DIR": str(Path(td) / "state")}
+            with patch.dict(os.environ, env):
+                mod.record_feedback("python-testing", "success", "route-1")
+                mod.record_feedback("python-testing", "failure", "route-2")
+                data = mod.load_usage_data(include_routes=True)
+
+            signal = data.signals["python-testing"]
+            self.assertEqual((signal.success, signal.failure), (1, 1))
+            self.assertLessEqual(abs(mod.learned_adjustment(signal)), 8)
+            self.assertEqual(data.feedback_events, 2)
+
+    def test_suite_component_feedback_keeps_component_name(self):
+        with tempfile.TemporaryDirectory() as td:
+            env = {"HOME": td, "AGENT_SKILL_ROUTER_STATE_DIR": str(Path(td) / "state")}
+            with patch.dict(os.environ, env):
+                event = mod.record_feedback("superscrape", "success", "route-web")
+                data = mod.load_usage_data(include_routes=True)
+
+            self.assertEqual(event["skill"], "superscrape")
+            self.assertEqual(data.signals["superscrape"].success, 1)
+            self.assertNotIn("superweb", data.signals)
+
+    def test_explicit_ghmax_routes_a_tool_not_a_fuzzy_skill(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(root, "grep-app", "Search code with grep patterns.")
+            with patch.object(
+                mod.shutil,
+                "which",
+                side_effect=lambda name: f"/bin/{name}" if name == "ghmax" else None,
+            ):
+                result = mod.route(
+                    "search GitHub code with ghmax",
+                    roots=[root],
+                    usage_data=mod.UsageData(signals={}),
+                )
+
+            self.assertEqual(result.decision, "explicit-tool")
+            self.assertEqual(result.selected, [])
+            self.assertEqual(result.recommended_tools[0].name, "ghmax")
+            self.assertEqual(result.recommended_tools[0].path, "/bin/ghmax")
+
+    def test_ghgrep_alias_canonicalizes_to_ghmax(self):
+        with patch.object(
+            mod.shutil,
+            "which",
+            side_effect=lambda name: f"/bin/{name}" if name == "ghgrep" else None,
+        ):
+            ranked = mod.rank_tools(
+                "find current implementation with ghgrep",
+                mod.UsageData(signals={}),
+            )
+
+        self.assertEqual(ranked[0].name, "ghmax")
+        self.assertTrue(ranked[0].explicit)
+        self.assertEqual(mod.canonical_tool_name("/tmp/ghgrep"), "ghmax")
+
+    def test_web_command_aliases_canonicalize_to_superweb(self):
+        with patch.object(
+            mod.shutil,
+            "which",
+            side_effect=lambda name: f"/bin/{name}" if name == "superweb" else None,
+        ):
+            ranked = mod.rank_tools(
+                "fetch this page with smart-fetch",
+                mod.UsageData(signals={}),
+            )
+
+        self.assertEqual(ranked[0].name, "superweb")
+        self.assertTrue(ranked[0].explicit)
+        self.assertEqual(mod.canonical_tool_name("/tmp/superscrape"), "superweb")
+        self.assertEqual(mod.canonical_tool_name("/tmp/superfetch"), "superweb")
+
+    def test_german_multisource_web_workflow_selects_superweb(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(
+                root,
+                "superweb",
+                "Search current web sources and produce cited multi-source research.",
+                tags="web, search, research, cited, current",
+            )
+            write_skill(
+                root,
+                "citation-formatting",
+                "Format citations already present in a local document.",
+            )
+            with patch.object(
+                mod.shutil,
+                "which",
+                side_effect=lambda name: f"/bin/{name}"
+                if name == "superweb"
+                else None,
+            ):
+                result = mod.route(
+                    "Recherchiere mehrere aktuelle Webquellen und fasse sie "
+                    "mit Zitaten zusammen.",
+                    roots=[root],
+                    strict=True,
+                    usage_data=mod.UsageData(signals={}),
+                )
+
+        self.assertEqual(result.decision, "selected")
+        self.assertEqual([skill.name for skill in result.selected], ["superweb"])
+        self.assertEqual(result.recommended_tools[0].name, "superweb")
+
+    def test_decisive_pure_tool_route_suppresses_fuzzy_skill(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(root, "web-perf", "Search current web documentation.")
+            with patch.object(
+                mod.shutil,
+                "which",
+                side_effect=lambda name: f"/bin/{name}" if name == "superweb" else None,
+            ):
+                result = mod.route(
+                    "search current web documentation",
+                    roots=[root],
+                    usage_data=mod.UsageData(signals={}),
+                )
+
+            self.assertEqual(result.decision, "tool-selected")
+            self.assertEqual(result.selected, [])
+            self.assertEqual(result.recommended_tools[0].name, "superweb")
+
+    def test_tool_learning_is_bounded_and_cannot_create_relevance(self):
+        usage = mod.UsageData(
+            signals={},
+            tool_signals={
+                "ghmax": mod.ToolSignal(used=20, success=18, failure=2),
+                "run-guard": mod.ToolSignal(used=100, success=100),
+            },
+        )
+        with patch.object(mod.shutil, "which", side_effect=lambda name: f"/bin/{name}"):
+            ranked = mod.rank_tools("search GitHub repository code", usage)
+
+        self.assertEqual(ranked[0].name, "ghmax")
+        self.assertNotIn("run-guard", [candidate.name for candidate in ranked])
+        self.assertLessEqual(abs(ranked[0].adaptive_adjustment), 8)
+
+    def test_observer_logs_only_canonical_tool_outcomes(self):
+        with tempfile.TemporaryDirectory() as td:
+            env = {
+                "HOME": td,
+                "AGENT_SKILL_ROUTER_STATE_DIR": str(Path(td) / "state"),
+            }
+            payload = {
+                "tool_input": {
+                    "command": "python3 -V\nghmax --smart 'private query' && "
+                    "rtk tilth --budget 4000 src"
+                },
+                "tool_response": {"exit_code": 0, "duration_ms": 125},
+            }
+            with patch.dict(os.environ, env):
+                events = mod.observe_hook_payload(payload)
+                data = mod.load_usage_data(include_routes=True)
+                raw = mod.route_events_file().read_text(encoding="utf-8")
+
+            self.assertEqual([event["tool"] for event in events], ["ghmax", "rtk", "tilth"])
+            self.assertEqual(data.tool_signals["ghmax"].success, 1)
+            self.assertNotIn("private query", raw)
+            self.assertNotIn("--budget", raw)
+            self.assertEqual(mod._hook_outcome({"extra": {"status": "error"}}), "failure")
+            self.assertEqual(mod._hook_latency_ms({"extra": {"duration_ms": 77}}), 77)
+
+    def test_hook_install_is_append_only_and_idempotent(self):
+        with tempfile.TemporaryDirectory() as td:
+            codex = Path(td) / ".codex" / "hooks.json"
+            claude = Path(td) / ".claude" / "settings.json"
+            hermes = Path(td) / ".hermes" / "config.yaml"
+            existing = {
+                "hooks": {
+                    "PostToolUse": [
+                        {
+                            "matcher": "Bash",
+                            "hooks": [{"type": "command", "command": "existing"}],
+                        }
+                    ]
+                }
+            }
+            for path in (codex, claude):
+                path.parent.mkdir(parents=True)
+                path.write_text(json.dumps(existing), encoding="utf-8")
+            hermes.parent.mkdir(parents=True)
+            hermes.write_text("hooks: null\nhooks_auto_accept: false\n", encoding="utf-8")
+            with patch.dict(os.environ, {"HOME": td}):
+                first = mod.install_hooks("all")
+                second = mod.install_hooks("all")
+                status = [
+                    mod.hook_has_observer(name)
+                    for name in ("codex", "claude", "hermes")
+                ]
+
+            self.assertTrue(all(item["changed"] for item in first))
+            self.assertFalse(any(item["changed"] for item in second))
+            self.assertEqual(status, [True, True, True])
+            payload = json.loads(codex.read_text(encoding="utf-8"))
+            commands = [
+                hook["command"]
+                for entry in payload["hooks"]["PostToolUse"]
+                for hook in entry["hooks"]
+            ]
+            self.assertIn("existing", commands)
+            self.assertEqual(commands.count(str(Path(td) / ".local/bin/si") + " observe"), 1)
+            hermes_text = hermes.read_text(encoding="utf-8")
+            self.assertIn("  post_tool_call:", hermes_text)
+            self.assertIn("hooks_auto_accept: false", hermes_text)
+
     def test_install_dry_run_lists_targets(self):
         with tempfile.TemporaryDirectory() as td:
             with patch.dict(os.environ, {"HOME": td}):
@@ -676,6 +1218,39 @@ class AgentTokenSaverTests(unittest.TestCase):
                     / "SKILL.md"
                 ).is_file()
             )
+
+    def test_drift_report_separates_identical_and_divergent_copies(self):
+        with tempfile.TemporaryDirectory() as td:
+            root_a = Path(td) / "a"
+            root_b = Path(td) / "b"
+            root_c = Path(td) / "c"
+            write_skill(root_a, "shared", "First responsibility.")
+            write_skill(root_b, "shared", "Second responsibility.")
+            write_skill(root_a, "stable", "Same responsibility.")
+            write_skill(root_c, "stable", "Same responsibility.")
+
+            report = mod.skill_drift_report(
+                [root_a, root_b, root_c], include_rows=True
+            )
+            rows = {row["name"]: row for row in report["rows"]}
+
+            self.assertEqual(report["duplicate_groups"], 2)
+            self.assertEqual(report["divergent_groups"], 1)
+            self.assertTrue(rows["shared"]["divergent"])
+            self.assertFalse(rows["stable"]["divergent"])
+
+    def test_learning_observation_labels_sparse_and_mature_windows(self):
+        sparse = mod.UsageData(
+            signals={"superweb": mod.UsageSignal(success=1)},
+            route_events=50,
+        )
+        mature = mod.UsageData(
+            signals={"superweb": mod.UsageSignal(success=20)},
+            route_events=20,
+        )
+
+        self.assertEqual(mod.learning_observation(sparse)["confidence"], "low")
+        self.assertEqual(mod.learning_observation(mature)["confidence"], "high")
 
 
 if __name__ == "__main__":
