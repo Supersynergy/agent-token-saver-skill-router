@@ -204,7 +204,9 @@ class AgentTokenSaverTests(unittest.TestCase):
             explicit = mod.route("$context-mode", roots=[root])
 
             self.assertEqual(automatic.selected, [])
-            self.assertEqual([skill.name for skill in explicit.selected], ["context-mode"])
+            self.assertEqual(
+                [skill.name for skill in explicit.selected], ["context-mode"]
+            )
 
     def test_plain_test_verification_does_not_load_an_unrelated_debugger(self):
         with tempfile.TemporaryDirectory() as td:
@@ -224,7 +226,9 @@ class AgentTokenSaverTests(unittest.TestCase):
     def test_run_tests_is_plain_verification_and_loads_no_skill(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td) / "skills"
-            write_skill(root, "test-driven-development", "Use red-green-refactor for tests.")
+            write_skill(
+                root, "test-driven-development", "Use red-green-refactor for tests."
+            )
 
             result = mod.route("run tests", roots=[root], strict=True)
 
@@ -595,7 +599,9 @@ class AgentTokenSaverTests(unittest.TestCase):
                 strict=True,
             )
 
-            self.assertEqual([skill.name for skill in result.selected], ["agent-token-saver"])
+            self.assertEqual(
+                [skill.name for skill in result.selected], ["agent-token-saver"]
+            )
 
     def test_token_stack_audit_beats_generic_goal_audit(self):
         with tempfile.TemporaryDirectory() as td:
@@ -660,9 +666,7 @@ class AgentTokenSaverTests(unittest.TestCase):
             favorites = Path(td) / "favorites.txt"
             favorites.write_text("friction-audit=6\n", encoding="utf-8")
 
-            with patch.dict(
-                os.environ, {"AGENT_SKILL_FAVORITES_FILE": str(favorites)}
-            ):
+            with patch.dict(os.environ, {"AGENT_SKILL_FAVORITES_FILE": str(favorites)}):
                 result = mod.route(
                     "wie kannst du selbstlernend sein und skills automatisch "
                     "optimieren bei nutzung auch vom skill router",
@@ -760,14 +764,10 @@ class AgentTokenSaverTests(unittest.TestCase):
             )
 
             report = mod.usage_report(catalog, data, include_rows=True)
-            canonical = {
-                row["name"]: row for row in report["canonical_usage"]
-            }
+            canonical = {row["name"]: row for row in report["canonical_usage"]}
 
             self.assertEqual(report["total_applied"], 15)
-            self.assertEqual(
-                canonical["agent-token-saver-skill-router"]["applied"], 15
-            )
+            self.assertEqual(canonical["agent-token-saver-skill-router"]["applied"], 15)
             self.assertEqual(
                 canonical["agent-token-saver-skill-router"]["aliases"],
                 ["allskills", "just-in-time-skill-router"],
@@ -866,6 +866,32 @@ class AgentTokenSaverTests(unittest.TestCase):
             self.assertEqual(result.decision, "selected")
             self.assertEqual(result.selected[0].name, "skill-portfolio-governance")
 
+    def test_german_full_fleet_repair_beats_domain_best_practices(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(
+                root,
+                "skill-fleet-audit",
+                "Audit and safely repair all skills with Agent Skills best practices. "
+                "Use for die ganzen Skills, stabil, SkillIndexer, and aufrufbar.",
+            )
+            write_skill(
+                root,
+                "vercel-react-best-practices",
+                "React and Next.js performance best practices for components and pages.",
+            )
+
+            result = mod.route(
+                "fix bitte die ganzen skills nach best practices, jeder skill stabil "
+                "und im skillindexer aufrufbar",
+                roots=[root],
+                strict=True,
+                usage_data=mod.UsageData(signals={}),
+            )
+
+            self.assertEqual(result.decision, "selected")
+            self.assertEqual(result.selected[0].name, "skill-fleet-audit")
+
     def test_portfolio_verification_does_not_route_to_tdd(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td) / "skills"
@@ -937,9 +963,7 @@ class AgentTokenSaverTests(unittest.TestCase):
             mod.canonical_skill_name("skill-autopilot"),
             "skill-autopilot",
         )
-        self.assertNotIn(
-            "meta-skill-evolution-diary-weekly", mod.AUTO_ROUTE_EXCLUDED
-        )
+        self.assertNotIn("meta-skill-evolution-diary-weekly", mod.AUTO_ROUTE_EXCLUDED)
         self.assertNotIn(
             "meta-skill-token-efficiency-optimizer", mod.AUTO_ROUTE_EXCLUDED
         )
@@ -1037,9 +1061,7 @@ class AgentTokenSaverTests(unittest.TestCase):
             with patch.object(
                 mod.shutil,
                 "which",
-                side_effect=lambda name: f"/bin/{name}"
-                if name == "superweb"
-                else None,
+                side_effect=lambda name: f"/bin/{name}" if name == "superweb" else None,
             ):
                 result = mod.route(
                     "Recherchiere mehrere aktuelle Webquellen und fasse sie "
@@ -1105,11 +1127,15 @@ class AgentTokenSaverTests(unittest.TestCase):
                 data = mod.load_usage_data(include_routes=True)
                 raw = mod.route_events_file().read_text(encoding="utf-8")
 
-            self.assertEqual([event["tool"] for event in events], ["ghmax", "rtk", "tilth"])
+            self.assertEqual(
+                [event["tool"] for event in events], ["ghmax", "rtk", "tilth"]
+            )
             self.assertEqual(data.tool_signals["ghmax"].success, 1)
             self.assertNotIn("private query", raw)
             self.assertNotIn("--budget", raw)
-            self.assertEqual(mod._hook_outcome({"extra": {"status": "error"}}), "failure")
+            self.assertEqual(
+                mod._hook_outcome({"extra": {"status": "error"}}), "failure"
+            )
             self.assertEqual(mod._hook_latency_ms({"extra": {"duration_ms": 77}}), 77)
 
     def test_hook_install_is_append_only_and_idempotent(self):
@@ -1131,7 +1157,9 @@ class AgentTokenSaverTests(unittest.TestCase):
                 path.parent.mkdir(parents=True)
                 path.write_text(json.dumps(existing), encoding="utf-8")
             hermes.parent.mkdir(parents=True)
-            hermes.write_text("hooks: null\nhooks_auto_accept: false\n", encoding="utf-8")
+            hermes.write_text(
+                "hooks: null\nhooks_auto_accept: false\n", encoding="utf-8"
+            )
             with patch.dict(os.environ, {"HOME": td}):
                 first = mod.install_hooks("all")
                 second = mod.install_hooks("all")
@@ -1150,7 +1178,9 @@ class AgentTokenSaverTests(unittest.TestCase):
                 for hook in entry["hooks"]
             ]
             self.assertIn("existing", commands)
-            self.assertEqual(commands.count(str(Path(td) / ".local/bin/si") + " observe"), 1)
+            self.assertEqual(
+                commands.count(str(Path(td) / ".local/bin/si") + " observe"), 1
+            )
             hermes_text = hermes.read_text(encoding="utf-8")
             self.assertIn("  post_tool_call:", hermes_text)
             self.assertIn("hooks_auto_accept: false", hermes_text)
@@ -1229,15 +1259,124 @@ class AgentTokenSaverTests(unittest.TestCase):
             write_skill(root_a, "stable", "Same responsibility.")
             write_skill(root_c, "stable", "Same responsibility.")
 
-            report = mod.skill_drift_report(
-                [root_a, root_b, root_c], include_rows=True
-            )
+            report = mod.skill_drift_report([root_a, root_b, root_c], include_rows=True)
             rows = {row["name"]: row for row in report["rows"]}
 
             self.assertEqual(report["duplicate_groups"], 2)
             self.assertEqual(report["divergent_groups"], 1)
             self.assertTrue(rows["shared"]["divergent"])
             self.assertFalse(rows["stable"]["divergent"])
+
+    def test_repair_moves_embedded_frontmatter_and_quotes_yaml_scalars(self):
+        with tempfile.TemporaryDirectory() as td:
+            skill_dir = Path(td) / "browser-audit"
+            skill_dir.mkdir()
+            path = skill_dir / "SKILL.md"
+            original = (
+                "<!-- injected preamble -->\n"
+                "Read local context first.\n"
+                "---\n"
+                "name: browser-audit\n"
+                "description: Audit browser state: inspect, change, verify.\n"
+                "argument-hint: [url] [--strict]\n"
+                "---\n\n"
+                "# Browser audit\n"
+            )
+
+            repaired, fixes = mod.repair_skill_text(path, original)
+            path.write_text(repaired, encoding="utf-8")
+            issues = mod.validate_skill_file(path)
+
+            self.assertTrue(repaired.startswith("---\nname: browser-audit\n"))
+            self.assertIn("<!-- injected preamble -->", repaired)
+            self.assertIn("frontmatter-moved-to-start", fixes)
+            self.assertIn("quoted-description", fixes)
+            self.assertIn("quoted-argument-hint", fixes)
+            self.assertFalse([issue for issue in issues if issue.severity == "error"])
+
+    def test_repair_adds_frontmatter_to_plain_skill(self):
+        with tempfile.TemporaryDirectory() as td:
+            skill_dir = Path(td) / "canvas"
+            skill_dir.mkdir()
+            path = skill_dir / "SKILL.md"
+            original = "# Canvas\n\nDisplay HTML on connected nodes.\n"
+
+            repaired, fixes = mod.repair_skill_text(path, original)
+            path.write_text(repaired, encoding="utf-8")
+            document = mod.parse_frontmatter_document(path)
+
+            self.assertIn("frontmatter-added", fixes)
+            self.assertEqual(document.fields["name"], "canvas")
+            self.assertIn("Display HTML", document.fields["description"])
+            self.assertFalse(
+                [
+                    issue
+                    for issue in mod.validate_skill_file(path)
+                    if issue.severity == "error"
+                ]
+            )
+
+    def test_scan_prefers_shallow_canonical_copy_within_same_root(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(root / "superskills", "zeta", "Nested mirror copy.")
+            write_skill(root, "zeta", "Canonical shallow copy.")
+
+            skills = mod.scan([root])
+
+            self.assertEqual(len(skills), 1)
+            self.assertIn("Canonical shallow", skills[0].description)
+            self.assertEqual(Path(skills[0].path), root / "zeta" / "SKILL.md")
+
+    def test_validation_checks_script_syntax_without_executing_script(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(root, "broken-script", "Use when checking a broken script.")
+            script = root / "broken-script" / "scripts" / "broken.py"
+            script.parent.mkdir()
+            script.write_text("def broken(:\n    pass\n", encoding="utf-8")
+
+            issues = mod.validate_skill_file(
+                root / "broken-script" / "SKILL.md", check_scripts=True
+            )
+
+            self.assertIn("script-syntax", [issue.code for issue in issues])
+
+    def test_smoke_resolves_and_invokes_every_indexed_skill(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(root, "python-testing", "Use when debugging Python tests.")
+            write_skill(root, "copywriting", "Use when writing product copy.")
+            catalog = mod.Catalog(
+                skills=mod.scan([root]),
+                roots=[root],
+                source="scan",
+                index_path=Path(td) / "index.json",
+            )
+
+            report = mod.skill_smoke_report(catalog)
+
+            self.assertTrue(report["ok"])
+            self.assertEqual(report["resolved"], 2)
+            self.assertEqual(report["invoked"], 2)
+
+    def test_repair_apply_creates_private_backup_manifest(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            root = base / "skills"
+            skill_dir = root / "plain-skill"
+            skill_dir.mkdir(parents=True)
+            path = skill_dir / "SKILL.md"
+            path.write_text("# Plain\n\nUse this plain workflow.\n", encoding="utf-8")
+            state = base / "state"
+
+            with patch.dict(os.environ, {"AGENT_SKILL_ROUTER_STATE_DIR": str(state)}):
+                report = mod.repair_report([path], apply=True)
+
+            backup = Path(report["backup_dir"])
+            self.assertEqual(report["changed"], 1)
+            self.assertTrue((backup / "manifest.json").is_file())
+            self.assertTrue(mod.parse_frontmatter_document(path))
 
     def test_learning_observation_labels_sparse_and_mature_windows(self):
         sparse = mod.UsageData(

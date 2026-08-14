@@ -16,6 +16,8 @@ import os
 import re
 import shlex
 import shutil
+import stat
+import subprocess
 import sys
 import time
 from collections import Counter
@@ -23,6 +25,7 @@ from dataclasses import asdict, dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Iterable
+from urllib.parse import unquote
 
 SKILL_NAME = "agent-token-saver-skill-router"
 # Compatibility names stay resolvable for explicit users and old hosts. A
@@ -79,6 +82,18 @@ ROOT = Path(__file__).resolve().parents[1]
 ROOT_SKILL = ROOT / "SKILL.md"
 WORD_RE = re.compile(r"[\w+]{2,}", re.UNICODE)
 EXPLICIT_SKILL_RE = re.compile(r"\$([a-zA-Z0-9_:+.-]+)")
+SKILL_SPEC_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+FRONTMATTER_KEY_RE = re.compile(r"^([A-Za-z0-9_.-]+):(?:[ \t]*(.*))?$")
+MARKDOWN_LINK_RE = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
+QUALITY_FRAMEWORK_VERSION = "agent-skills-spec+si-runtime-v1"
+SCALAR_FRONTMATTER_FIELDS = {
+    "argument-hint",
+    "compatibility",
+    "description",
+    "license",
+    "name",
+}
+SCRIPT_SYNTAX_SUFFIXES = {".py", ".sh", ".bash", ".zsh", ".js", ".cjs", ".mjs"}
 STOPWORDS = {
     "a",
     "an",
@@ -385,7 +400,15 @@ TOKEN_CONTEXT_TOKENS = {
     "usage",
 }
 PLAIN_TEST_TOKENS = {"change", "check", "output", "run", "suite", "test", "verify"}
-AGENT_TEAM_TOKENS = {"agent", "capsule", "controller", "oracle", "subagent", "team", "worker"}
+AGENT_TEAM_TOKENS = {
+    "agent",
+    "capsule",
+    "controller",
+    "oracle",
+    "subagent",
+    "team",
+    "worker",
+}
 MEETING_TOKENS = {"calendar", "graph", "meeting", "microsoft", "subscription"}
 # Control/orchestration skills (agent-loop, omnigoal, verification-loop, master-check,
 # goalmaster) must be reachable from abstract multi-step intents. These tokens signal
@@ -593,12 +616,12 @@ MIN_STRICT_MARGIN = 3
 # winner to tuned-weights.json. Stdlib only; missing file = safe defaults.
 # ---------------------------------------------------------------------------
 TUNED_DEFAULTS: dict[str, float] = {
-    "name_w": 8.0,          # intent token in skill name
-    "desc_w": 3.0,          # intent token in description
-    "kw_w": 6.0,            # intent token in keywords
-    "coverage_w": 4.0,      # per extra matched token
-    "bigram_name": 12.0,    # intent bigram found in skill name
-    "bigram_desc": 5.0,     # intent bigram found in description
+    "name_w": 8.0,  # intent token in skill name
+    "desc_w": 3.0,  # intent token in description
+    "kw_w": 6.0,  # intent token in keywords
+    "coverage_w": 4.0,  # per extra matched token
+    "bigram_name": 12.0,  # intent bigram found in skill name
+    "bigram_desc": 5.0,  # intent bigram found in description
     "desc_damp_start": 60.0,  # description word count where damping kicks in
     "desc_damp_floor": 0.35,  # minimum description scale
     "no_workflow_min_score": 14.0,  # fallback gate: min top score w/o verb
@@ -625,6 +648,8 @@ def tuned_weights() -> dict[str, float]:
         pass
     _tuned_cache = weights
     return weights
+
+
 INDEX_SCHEMA = 1
 DEFAULT_INDEX_TTL_SECONDS = 300.0
 TELEMETRY_SCHEMA = 1
@@ -697,6 +722,15 @@ JURY_CASES = [
         "intent": "send a telegram message",
         "max": 3,
         "expected": ["bluebubbles", "using-telegram-bot", "agentmaster"],
+    },
+    {
+        "intent": (
+            "fix bitte die ganzen skills nach best practices, jeder skill stabil "
+            "und im skillindexer aufrufbar"
+        ),
+        "max": 1,
+        "strict": True,
+        "expected": ["skill-fleet-audit"],
     },
     {
         "intent": "transcribe and answer this audio file",
@@ -788,6 +822,26 @@ class Catalog:
     roots: list[Path]
     source: str
     index_path: Path
+
+
+@dataclass(frozen=True)
+class SkillIssue:
+    path: str
+    code: str
+    severity: str
+    message: str
+    line: int = 0
+
+
+@dataclass(frozen=True)
+class FrontmatterDocument:
+    text: str
+    lines: list[str]
+    start: int
+    end: int
+    fields: dict[str, str]
+    field_lines: dict[str, int]
+    body: str
 
 
 # Tool routing is intentionally separate from skill routing. A CLI invocation
@@ -979,14 +1033,14 @@ def tool_learned_adjustment(signal: ToolSignal | None) -> int:
     familiarity = min(2, math.floor(math.log2(signal.used + 1)))
     outcomes = signal.success + signal.failure
     quality = (
-        round(6 * (signal.success - signal.failure) / (outcomes + 2))
-        if outcomes
-        else 0
+        round(6 * (signal.success - signal.failure) / (outcomes + 2)) if outcomes else 0
     )
     latency_penalty = 0
     if signal.used and signal.total_latency_ms:
         average_ms = signal.total_latency_ms / signal.used
-        latency_penalty = -2 if average_ms >= 30_000 else (-1 if average_ms >= 10_000 else 0)
+        latency_penalty = (
+            -2 if average_ms >= 30_000 else (-1 if average_ms >= 10_000 else 0)
+        )
     return max(-8, min(8, familiarity + quality + latency_penalty))
 
 
@@ -1077,44 +1131,601 @@ def selection_limit(value: int) -> int:
     return max(1, min(value, MAX_SELECTED))
 
 
+def decode_frontmatter_scalar(raw: str) -> str:
+    value = raw.strip()
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        try:
+            decoded = json.loads(value)
+            return decoded if isinstance(decoded, str) else str(decoded)
+        except (TypeError, ValueError):
+            return value[1:-1]
+    if len(value) >= 2 and value[0] == value[-1] == "'":
+        return value[1:-1].replace("''", "'")
+    return value
+
+
+def frontmatter_document_from_text(text: str) -> FrontmatterDocument | None:
+    lines = text.lstrip("\ufeff").splitlines()
+    if not lines or lines[0].strip() != "---":
+        return None
+    try:
+        end = next(i for i, line in enumerate(lines[1:], 1) if line.strip() == "---")
+    except StopIteration:
+        return None
+    fields: dict[str, str] = {}
+    field_lines: dict[str, int] = {}
+    index = 1
+    while index < end:
+        line = lines[index]
+        match = FRONTMATTER_KEY_RE.match(line) if line == line.lstrip() else None
+        if not match:
+            index += 1
+            continue
+        key = match.group(1)
+        raw = (match.group(2) or "").strip()
+        field_lines.setdefault(key, index + 1)
+        if raw in {">-", ">", "|-", "|"}:
+            tail: list[str] = []
+            cursor = index + 1
+            while cursor < end and (
+                not lines[cursor].strip() or lines[cursor] != lines[cursor].lstrip()
+            ):
+                tail.append(lines[cursor].strip())
+                cursor += 1
+            fields.setdefault(key, " ".join(item for item in tail if item).strip())
+            index = cursor
+            continue
+        fields.setdefault(key, decode_frontmatter_scalar(raw))
+        index += 1
+    return FrontmatterDocument(
+        text=text,
+        lines=lines,
+        start=0,
+        end=end,
+        fields=fields,
+        field_lines=field_lines,
+        body="\n".join(lines[end + 1 :]),
+    )
+
+
+def parse_frontmatter_document(path: Path) -> FrontmatterDocument | None:
+    return frontmatter_document_from_text(path.read_text(encoding="utf-8"))
+
+
 def parse_frontmatter(path: Path) -> tuple[str, str, str]:
-    with path.open(encoding="utf-8", errors="ignore") as handle:
-        if handle.readline().strip() != "---":
-            return path.parent.name, "", ""
-        frontmatter: list[str] = []
-        size = 0
-        for line in handle:
-            if line.rstrip("\r\n") == "---":
-                break
-            size += len(line)
-            if size > 65_536:
-                return path.parent.name, "", ""
-            frontmatter.append(line)
-        else:
-            return path.parent.name, "", ""
-    fm = "".join(frontmatter)
-    name = ""
-    desc = ""
+    document = parse_frontmatter_document(path)
+    if document is None:
+        fallback = path.stem if path.name != "SKILL.md" else path.parent.name
+        return fallback, "", ""
+    name = document.fields.get("name", "").strip()
+    desc = document.fields.get("description", "").strip()
     tags = ""
-    lines = fm.splitlines()
-    for i, line in enumerate(lines):
-        if line.startswith("name:"):
-            name = line.split(":", 1)[1].strip().strip("\"'")
-        elif line.startswith("description:"):
-            raw = line.split(":", 1)[1].strip()
-            if raw in {">-", ">", "|-", "|"}:
-                tail = []
-                for nxt in lines[i + 1 :]:
-                    if re.match(r"^[A-Za-z0-9_.-]+:\s*", nxt):
-                        break
-                    tail.append(nxt.strip())
-                desc = " ".join(x for x in tail if x).strip()
-            else:
-                desc = raw.strip("\"'")
-        elif line.strip().startswith("tags:"):
+    for line in document.lines[1 : document.end]:
+        if line.strip().startswith("tags:"):
             raw = line.split(":", 1)[1].strip()
             tags = " ".join(WORD_RE.findall(raw))
-    return name or path.parent.name, desc, tags
+            break
+    fallback = path.stem if path.name != "SKILL.md" else path.parent.name
+    return name or fallback, desc, tags
+
+
+def normalized_skill_name(path: Path) -> str:
+    raw = path.stem if path.name != "SKILL.md" else path.parent.name
+    normalized = re.sub(r"[^a-z0-9]+", "-", raw.lower()).strip("-")
+    normalized = re.sub(r"-{2,}", "-", normalized)
+    return normalized[:64].rstrip("-") or "unnamed-skill"
+
+
+def description_from_body(body: str, name: str) -> str:
+    without_comments = re.sub(r"<!--.*?-->", "", body, flags=re.DOTALL)
+    without_fences = re.sub(r"```.*?```", "", without_comments, flags=re.DOTALL)
+    candidates: list[str] = []
+    for paragraph in re.split(r"\n\s*\n", without_fences):
+        compact = " ".join(line.strip() for line in paragraph.splitlines()).strip()
+        if not compact or compact.startswith(("#", "---", "::", "<")):
+            continue
+        compact = re.sub(r"!?\[([^\]]+)\]\([^)]+\)", r"\1", compact)
+        compact = re.sub(r"[*_`>|]", "", compact)
+        compact = re.sub(r"\s+", " ", compact).strip(" -")
+        if len(compact) >= 24:
+            candidates.append(compact)
+            break
+    base = candidates[0] if candidates else f"Procedures and references for {name}."
+    if len(base) > 820:
+        base = base[:817].rsplit(" ", 1)[0] + "..."
+    if not re.search(
+        r"\b(use when|use for|when to use|nutze|verwende|trigger)\b", base, re.I
+    ):
+        base = f"{base} Use when a task requires {name.replace('-', ' ')}."
+    return base[:1024]
+
+
+def scalar_needs_yaml_quotes(key: str, raw: str) -> bool:
+    value = raw.strip()
+    if key not in SCALAR_FRONTMATTER_FIELDS or not value:
+        return False
+    if value in {">-", ">", "|-", "|"}:
+        return False
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        return False
+    if key == "argument-hint":
+        return True
+    return (
+        ": " in value
+        or " #" in value
+        or value.startswith(("[", "{", "&", "*", "!", "%", "@", "`"))
+    )
+
+
+def local_markdown_target(raw_target: str) -> str | None:
+    target = raw_target.strip()
+    if target.startswith("<") and ">" in target:
+        target = target[1 : target.index(">")]
+    elif " " in target:
+        target = target.split(" ", 1)[0]
+    target = unquote(target).split("#", 1)[0].strip()
+    if not target or target.startswith("#"):
+        return None
+    if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", target):
+        return None
+    return target
+
+
+def script_syntax_issues(skill_path: Path, max_scripts: int = 500) -> list[SkillIssue]:
+    if skill_path.name != "SKILL.md":
+        return []
+    scripts_dir = skill_path.parent / "scripts"
+    if not scripts_dir.is_dir():
+        return []
+    candidates = sorted(
+        path
+        for path in scripts_dir.rglob("*")
+        if path.is_file()
+        and path.suffix.lower() in SCRIPT_SYNTAX_SUFFIXES
+        and not any(part in EXCLUDE_DIRS for part in path.parts)
+    )
+    issues: list[SkillIssue] = []
+    if len(candidates) > max_scripts:
+        issues.append(
+            SkillIssue(
+                str(skill_path),
+                "script-check-limit",
+                "warning",
+                f"checked first {max_scripts} of {len(candidates)} scripts",
+            )
+        )
+        candidates = candidates[:max_scripts]
+    missing_checkers: set[str] = set()
+    for script in candidates:
+        try:
+            source = script.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            issues.append(
+                SkillIssue(str(script), "script-unreadable", "error", str(exc))
+            )
+            continue
+        suffix = script.suffix.lower()
+        problem = ""
+        if suffix == ".py":
+            try:
+                compile(source, str(script), "exec")
+            except (SyntaxError, ValueError) as exc:
+                problem = f"{type(exc).__name__}: {exc}"
+        elif suffix in {".sh", ".bash", ".zsh"}:
+            checker = "zsh" if suffix == ".zsh" else "bash"
+            binary = shutil.which(checker)
+            if binary:
+                try:
+                    completed = subprocess.run(
+                        [binary, "-n", str(script)],
+                        capture_output=True,
+                        text=True,
+                        timeout=8,
+                        check=False,
+                    )
+                    if completed.returncode:
+                        problem = (completed.stderr or completed.stdout).strip()
+                except (OSError, subprocess.TimeoutExpired) as exc:
+                    problem = str(exc)
+            else:
+                missing_checkers.add(checker)
+        else:
+            binary = shutil.which("node")
+            if binary:
+                try:
+                    completed = subprocess.run(
+                        [binary, "--check", str(script)],
+                        capture_output=True,
+                        text=True,
+                        timeout=8,
+                        check=False,
+                    )
+                    if completed.returncode:
+                        problem = (completed.stderr or completed.stdout).strip()
+                except (OSError, subprocess.TimeoutExpired) as exc:
+                    problem = str(exc)
+            else:
+                missing_checkers.add("node")
+        if problem:
+            issues.append(
+                SkillIssue(str(script), "script-syntax", "error", problem[:500])
+            )
+        if source.startswith("#!") and not os.access(script, os.X_OK):
+            issues.append(
+                SkillIssue(
+                    str(script),
+                    "script-not-executable",
+                    "warning",
+                    "script has a shebang but is not executable",
+                )
+            )
+    for checker in sorted(missing_checkers):
+        issues.append(
+            SkillIssue(
+                str(skill_path),
+                "script-checker-missing",
+                "warning",
+                f"{checker} is unavailable; matching scripts were not syntax-checked",
+            )
+        )
+    return issues
+
+
+def validate_skill_file(
+    path: Path, *, spec_strict: bool = False, check_scripts: bool = False
+) -> list[SkillIssue]:
+    issues: list[SkillIssue] = []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        return [SkillIssue(str(path), "unreadable", "error", str(exc))]
+    document = frontmatter_document_from_text(text)
+    if document is None:
+        code = (
+            "missing-frontmatter"
+            if not text.lstrip("\ufeff").startswith("---")
+            else "unclosed-frontmatter"
+        )
+        return [
+            SkillIssue(
+                str(path),
+                code,
+                "error",
+                "SKILL.md must start with a closed YAML frontmatter block",
+                1,
+            )
+        ]
+    frontmatter_bytes = len("\n".join(document.lines[1 : document.end]).encode("utf-8"))
+    if frontmatter_bytes > 65_536:
+        issues.append(
+            SkillIssue(
+                str(path),
+                "frontmatter-too-large",
+                "error",
+                f"frontmatter is {frontmatter_bytes} bytes; limit is 65536",
+                1,
+            )
+        )
+    seen_keys: set[str] = set()
+    for index, line in enumerate(document.lines[1 : document.end], 2):
+        match = FRONTMATTER_KEY_RE.match(line) if line == line.lstrip() else None
+        if not match:
+            continue
+        key = match.group(1)
+        raw = (match.group(2) or "").strip()
+        if key in seen_keys:
+            issues.append(
+                SkillIssue(str(path), "duplicate-frontmatter-key", "error", key, index)
+            )
+        seen_keys.add(key)
+        if scalar_needs_yaml_quotes(key, raw):
+            issues.append(
+                SkillIssue(
+                    str(path),
+                    "invalid-yaml-scalar",
+                    "error",
+                    f"quote the {key} scalar",
+                    index,
+                )
+            )
+    name = document.fields.get("name", "").strip()
+    description = document.fields.get("description", "").strip()
+    if not name:
+        issues.append(
+            SkillIssue(str(path), "missing-name", "error", "name is required")
+        )
+    else:
+        if len(name) > 64 or not SKILL_SPEC_NAME_RE.fullmatch(name):
+            issues.append(
+                SkillIssue(
+                    str(path),
+                    "invalid-name",
+                    "error" if spec_strict else "warning",
+                    "name must be 1-64 lowercase letters, digits, or single hyphens",
+                    document.field_lines.get("name", 0),
+                )
+            )
+        if path.name == "SKILL.md" and name != path.parent.name:
+            issues.append(
+                SkillIssue(
+                    str(path),
+                    "name-directory-mismatch",
+                    "error" if spec_strict else "warning",
+                    f"frontmatter name {name!r} differs from directory {path.parent.name!r}",
+                    document.field_lines.get("name", 0),
+                )
+            )
+    if not description:
+        issues.append(
+            SkillIssue(
+                str(path), "missing-description", "error", "description is required"
+            )
+        )
+    elif len(description) > 1024:
+        issues.append(
+            SkillIssue(
+                str(path),
+                "description-too-long",
+                "error",
+                f"description has {len(description)} characters; limit is 1024",
+                document.field_lines.get("description", 0),
+            )
+        )
+    compatibility = document.fields.get("compatibility", "").strip()
+    if compatibility and len(compatibility) > 500:
+        issues.append(
+            SkillIssue(
+                str(path),
+                "compatibility-too-long",
+                "error",
+                f"compatibility has {len(compatibility)} characters; limit is 500",
+                document.field_lines.get("compatibility", 0),
+            )
+        )
+    if not document.body.strip():
+        issues.append(
+            SkillIssue(str(path), "empty-body", "error", "skill body is empty")
+        )
+    body_lines = document.body.splitlines()
+    if len(body_lines) > 500:
+        issues.append(
+            SkillIssue(
+                str(path),
+                "body-over-500-lines",
+                "warning",
+                f"body has {len(body_lines)} lines; split details into references",
+            )
+        )
+    if path.name != "SKILL.md":
+        issues.append(
+            SkillIssue(
+                str(path),
+                "flat-skill-extension",
+                "error" if spec_strict else "warning",
+                "runtime-compatible flat skill; portable Agent Skills use <name>/SKILL.md",
+            )
+        )
+    skill_root = path.parent
+    for match in MARKDOWN_LINK_RE.finditer(document.body):
+        target = local_markdown_target(match.group(1))
+        if target is None:
+            continue
+        line = document.end + 2 + document.body[: match.start()].count("\n")
+        if Path(target).is_absolute():
+            issues.append(
+                SkillIssue(
+                    str(path),
+                    "absolute-resource-path",
+                    "warning",
+                    f"prefer a relative resource path: {target}",
+                    line,
+                )
+            )
+            continue
+        candidate = (skill_root / target).resolve()
+        try:
+            candidate.relative_to(skill_root.resolve())
+        except ValueError:
+            issues.append(
+                SkillIssue(
+                    str(path),
+                    "resource-path-escape",
+                    "error" if spec_strict else "warning",
+                    target,
+                    line,
+                )
+            )
+            continue
+        if not candidate.exists():
+            strong_reference = target.startswith(("scripts/", "references/", "assets/"))
+            issues.append(
+                SkillIssue(
+                    str(path),
+                    "missing-resource",
+                    "error" if spec_strict or strong_reference else "warning",
+                    target,
+                    line,
+                )
+            )
+    if check_scripts:
+        issues.extend(script_syntax_issues(path))
+    return issues
+
+
+def validation_report(
+    paths: Iterable[Path], *, spec_strict: bool = False, check_scripts: bool = False
+) -> dict[str, object]:
+    unique_paths = sorted({str(path.resolve()) for path in paths})
+    issues: list[SkillIssue] = []
+    for raw_path in unique_paths:
+        issues.extend(
+            validate_skill_file(
+                Path(raw_path), spec_strict=spec_strict, check_scripts=check_scripts
+            )
+        )
+    errors = sum(issue.severity == "error" for issue in issues)
+    warnings = len(issues) - errors
+    counts = Counter(issue.code for issue in issues)
+    return {
+        "ok": errors == 0,
+        "framework": QUALITY_FRAMEWORK_VERSION,
+        "files": len(unique_paths),
+        "errors": errors,
+        "warnings": warnings,
+        "issue_counts": dict(sorted(counts.items())),
+        "issues": [asdict(issue) for issue in issues],
+    }
+
+
+def embedded_frontmatter_bounds(lines: list[str]) -> tuple[int, int] | None:
+    for start in range(1, min(len(lines), 80)):
+        if lines[start].strip() != "---":
+            continue
+        try:
+            end = next(
+                index
+                for index in range(start + 1, min(len(lines), start + 120))
+                if lines[index].strip() == "---"
+            )
+        except StopIteration:
+            continue
+        block = lines[start + 1 : end]
+        if any(line.startswith("name:") for line in block) and any(
+            line.startswith("description:") for line in block
+        ):
+            return start, end
+    return None
+
+
+def repair_skill_text(path: Path, text: str) -> tuple[str, list[str]]:
+    fixes: list[str] = []
+    text = text.lstrip("\ufeff")
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        bounds = embedded_frontmatter_bounds(lines)
+        if bounds:
+            start, end = bounds
+            frontmatter = lines[start : end + 1]
+            prefix = lines[:start]
+            suffix = lines[end + 1 :]
+            parts = frontmatter + [""]
+            if any(line.strip() for line in prefix):
+                parts.extend(prefix)
+                parts.append("")
+            parts.extend(suffix)
+            lines = parts
+            fixes.append("frontmatter-moved-to-start")
+        else:
+            name = normalized_skill_name(path)
+            description = description_from_body(text, name)
+            lines = [
+                "---",
+                f"name: {name}",
+                f"description: {json.dumps(description, ensure_ascii=False)}",
+                "---",
+                "",
+                *lines,
+            ]
+            fixes.append("frontmatter-added")
+    candidate = "\n".join(lines).rstrip() + "\n"
+    document = frontmatter_document_from_text(candidate)
+    if document is None:
+        return text, []
+    lines = document.lines
+    inserts: list[str] = []
+    name = document.fields.get("name", "").strip()
+    if not name:
+        name = normalized_skill_name(path)
+        inserts.append(f"name: {name}")
+        fixes.append("name-added")
+    if not document.fields.get("description", "").strip():
+        description = description_from_body(document.body, name)
+        inserts.append(f"description: {json.dumps(description, ensure_ascii=False)}")
+        fixes.append("description-added")
+    if inserts:
+        lines[1:1] = inserts
+        candidate = "\n".join(lines).rstrip() + "\n"
+        document = frontmatter_document_from_text(candidate)
+        if document is None:
+            return text, []
+        lines = document.lines
+    for index in range(1, document.end):
+        line = lines[index]
+        match = FRONTMATTER_KEY_RE.match(line) if line == line.lstrip() else None
+        if not match:
+            continue
+        key = match.group(1)
+        raw = (match.group(2) or "").strip()
+        if scalar_needs_yaml_quotes(key, raw):
+            lines[index] = (
+                f"{key}: {json.dumps(decode_frontmatter_scalar(raw), ensure_ascii=False)}"
+            )
+            fixes.append(f"quoted-{key}")
+    repaired = "\n".join(lines).rstrip() + "\n"
+    return repaired, sorted(set(fixes))
+
+
+def repair_report(paths: Iterable[Path], *, apply: bool = False) -> dict[str, object]:
+    proposals: list[dict[str, object]] = []
+    originals: dict[str, str] = {}
+    for raw_path in sorted({str(path.resolve()) for path in paths}):
+        path = Path(raw_path)
+        try:
+            original = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+        repaired, fixes = repair_skill_text(path, original)
+        if fixes and repaired != original:
+            originals[raw_path] = original
+            proposals.append(
+                {
+                    "path": raw_path,
+                    "fixes": fixes,
+                    "before_sha256": hashlib.sha256(original.encode()).hexdigest(),
+                    "after_sha256": hashlib.sha256(repaired.encode()).hexdigest(),
+                    "repaired": repaired,
+                }
+            )
+    backup_dir: Path | None = None
+    manifest_rows: list[dict[str, object]] = []
+    if apply and proposals:
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        backup_dir = (
+            router_state_dir() / "skill-repair-backups" / f"{stamp}-{os.getpid()}"
+        )
+        backup_dir.mkdir(parents=True, exist_ok=False)
+        os.chmod(backup_dir, stat.S_IRWXU)
+        files_dir = backup_dir / "files"
+        files_dir.mkdir(mode=0o700)
+        for number, proposal in enumerate(proposals, 1):
+            path = Path(str(proposal["path"]))
+            before = originals[str(path)]
+            mode = path.stat().st_mode & 0o777
+            backup = files_dir / f"{number:04d}.md"
+            atomic_write_text(backup, before)
+            os.chmod(backup, 0o600)
+            atomic_write_text(path, str(proposal["repaired"]))
+            os.chmod(path, mode)
+            manifest_rows.append(
+                {key: value for key, value in proposal.items() if key != "repaired"}
+                | {"backup": str(backup)}
+            )
+        atomic_write_text(
+            backup_dir / "manifest.json",
+            json.dumps(manifest_rows, indent=2, ensure_ascii=False) + "\n",
+        )
+        os.chmod(backup_dir / "manifest.json", 0o600)
+    return {
+        "ok": True,
+        "framework": QUALITY_FRAMEWORK_VERSION,
+        "apply": apply,
+        "changed": len(proposals),
+        "backup_dir": str(backup_dir) if backup_dir else "",
+        "changes": [
+            {key: value for key, value in proposal.items() if key != "repaired"}
+            for proposal in proposals
+        ],
+    }
 
 
 def looks_like_flat_skill(path: Path) -> bool:
@@ -1163,7 +1774,9 @@ def common_roots(cwd: Path | None = None) -> list[Path]:
     hermes_cfg = home / ".hermes" / "config.yaml"
     try:
         in_ext = False
-        for line in hermes_cfg.read_text(encoding="utf-8", errors="ignore").splitlines():
+        for line in hermes_cfg.read_text(
+            encoding="utf-8", errors="ignore"
+        ).splitlines():
             stripped = line.strip()
             if stripped.startswith("external_dirs:"):
                 in_ext = True
@@ -1238,28 +1851,38 @@ def scan(
     roots: list[Path] | None = None, max_files_per_root: int = 1000
 ) -> list[Skill]:
     roots = roots or common_roots()
-    skills: list[Skill] = []
-    seen_names: set[str] = set()
-    for root in roots:
+    selected: dict[str, tuple[tuple[object, ...], int, Skill]] = {}
+    sequence = 0
+    for root_index, root in enumerate(roots):
         for path in iter_skill_files(root, max_files_per_root):
             try:
                 name, desc, tags = parse_frontmatter(path)
-            except OSError:
+                resolved = path.resolve()
+                relative = resolved.relative_to(root.resolve())
+            except (OSError, UnicodeError):
                 continue
+            except ValueError:
+                relative = Path(path.name)
             key = name.lower()
-            if key in seen_names:
-                continue
-            seen_names.add(key)
-            skills.append(
-                Skill(
-                    name=name,
-                    description=desc,
-                    keywords=tags,
-                    path=str(path),
-                    root=str(root),
-                )
+            skill = Skill(
+                name=name,
+                description=desc,
+                keywords=tags,
+                path=str(path),
+                root=str(root),
             )
-    return skills
+            portable_name_match = path.name != "SKILL.md" or path.parent.name == name
+            priority: tuple[object, ...] = (
+                root_index,
+                0 if portable_name_match else 1,
+                len(relative.parts),
+                str(relative),
+            )
+            current = selected.get(key)
+            if current is None or priority < current[0]:
+                selected[key] = (priority, sequence, skill)
+            sequence += 1
+    return [item[2] for item in sorted(selected.values(), key=lambda item: item[1])]
 
 
 def scan_all_copies(
@@ -1274,7 +1897,7 @@ def scan_all_copies(
             try:
                 resolved_path = str(path.resolve())
                 name, desc, tags = parse_frontmatter(path)
-            except OSError:
+            except (OSError, UnicodeError):
                 continue
             if resolved_path in seen_paths:
                 continue
@@ -1386,13 +2009,21 @@ def router_state_dir() -> Path:
     if configured:
         return Path(configured).expanduser()
     state_home = os.getenv("XDG_STATE_HOME", "").strip()
-    base = Path(state_home).expanduser() if state_home else Path.home() / ".local" / "state"
+    base = (
+        Path(state_home).expanduser()
+        if state_home
+        else Path.home() / ".local" / "state"
+    )
     return base / "agent-skill-router"
 
 
 def route_events_file() -> Path:
     configured = os.getenv("AGENT_SKILL_ROUTER_LOG", "").strip()
-    return Path(configured).expanduser() if configured else router_state_dir() / "events.jsonl"
+    return (
+        Path(configured).expanduser()
+        if configured
+        else router_state_dir() / "events.jsonl"
+    )
 
 
 def feedback_state_file() -> Path:
@@ -1490,9 +2121,7 @@ def canonical_skill_signal(data: UsageData, name: str) -> UsageSignal:
                 field_name,
                 int(getattr(aggregate, field_name)) + int(getattr(signal, field_name)),
             )
-        aggregate.last_activity = max(
-            aggregate.last_activity, signal.last_activity
-        )
+        aggregate.last_activity = max(aggregate.last_activity, signal.last_activity)
     return aggregate
 
 
@@ -1509,7 +2138,9 @@ def event_skill_name(event: dict[str, object]) -> str:
     if not raw_path:
         return raw_name.lower()
     path = Path(raw_path)
-    return (path.parent.name if path.stem.lower() in GENERIC_SKILL_NAMES else path.stem).lower()
+    return (
+        path.parent.name if path.stem.lower() in GENERIC_SKILL_NAMES else path.stem
+    ).lower()
 
 
 def update_last_activity(signal: UsageSignal | ToolSignal, value: object) -> None:
@@ -1693,9 +2324,7 @@ def learning_observation(data: UsageData) -> dict[str, object]:
     }
 
 
-def record_route(
-    result: RouteResult, *, strict: bool, source: str = "cli"
-) -> str:
+def record_route(result: RouteResult, *, strict: bool, source: str = "cli") -> str:
     route_id = hashlib.sha256(
         f"{time.time_ns()}:{os.getpid()}:{result.intent}".encode("utf-8")
     ).hexdigest()[:16]
@@ -1725,7 +2354,9 @@ def record_route(
     return route_id
 
 
-def record_feedback(skill_name: str, outcome: str, route_id: str = "") -> dict[str, object]:
+def record_feedback(
+    skill_name: str, outcome: str, route_id: str = ""
+) -> dict[str, object]:
     normalized = canonical_skill_name(skill_name)
     if outcome not in {"success", "failure"}:
         raise ValueError("outcome must be success or failure")
@@ -1733,7 +2364,10 @@ def record_feedback(skill_name: str, outcome: str, route_id: str = "") -> dict[s
         state = json.loads(feedback_state_file().read_text(encoding="utf-8"))
     except (OSError, ValueError):
         state = {}
-    if not isinstance(state, dict) or state.get("schema") not in {None, TELEMETRY_SCHEMA}:
+    if not isinstance(state, dict) or state.get("schema") not in {
+        None,
+        TELEMETRY_SCHEMA,
+    }:
         state = {}
     skills = state.get("skills")
     if not isinstance(skills, dict):
@@ -1781,7 +2415,10 @@ def record_tool_usage(
         state = json.loads(feedback_state_file().read_text(encoding="utf-8"))
     except (OSError, ValueError):
         state = {}
-    if not isinstance(state, dict) or state.get("schema") not in {None, TELEMETRY_SCHEMA}:
+    if not isinstance(state, dict) or state.get("schema") not in {
+        None,
+        TELEMETRY_SCHEMA,
+    }:
         state = {}
     tools = state.get("tools")
     if not isinstance(tools, dict):
@@ -1957,13 +2594,17 @@ def hook_has_observer(target: str) -> bool:
         return (
             re.search(r"(?m)^hooks:\s*$", text) is not None
             and re.search(r"(?m)^  post_tool_call:\s*$", text) is not None
-            and f'command: {json.dumps(hook_command())}' in text
+            and f"command: {json.dumps(hook_command())}" in text
         )
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
-    post = payload.get("hooks", {}).get("PostToolUse", []) if isinstance(payload, dict) else []
+    post = (
+        payload.get("hooks", {}).get("PostToolUse", [])
+        if isinstance(payload, dict)
+        else []
+    )
     if not isinstance(post, list):
         return False
     for entry in post:
@@ -1985,19 +2626,31 @@ def install_hermes_hook(dry_run: bool = False) -> dict[str, object]:
         text = ""
     command_line = f"      command: {json.dumps(hook_command())}\n"
     if command_line.strip() in text:
-        return {"target": "hermes", "path": str(path), "changed": False, "dry_run": dry_run}
+        return {
+            "target": "hermes",
+            "path": str(path),
+            "changed": False,
+            "dry_run": dry_run,
+        }
     entry = (
-        '    - matcher: "terminal|shell|bash"\n'
-        + command_line
-        + "      timeout: 3\n"
+        '    - matcher: "terminal|shell|bash"\n' + command_line + "      timeout: 3\n"
     )
     null_hooks = re.search(r"(?m)^hooks:\s*(?:null|~)\s*$", text)
     if null_hooks:
-        updated = text[: null_hooks.start()] + "hooks:\n  post_tool_call:\n" + entry + text[null_hooks.end() :]
+        updated = (
+            text[: null_hooks.start()]
+            + "hooks:\n  post_tool_call:\n"
+            + entry
+            + text[null_hooks.end() :]
+        )
     else:
         lines = text.splitlines(keepends=True)
         hooks_index = next(
-            (index for index, line in enumerate(lines) if re.match(r"^hooks:\s*$", line)),
+            (
+                index
+                for index, line in enumerate(lines)
+                if re.match(r"^hooks:\s*$", line)
+            ),
             None,
         )
         if hooks_index is None:
@@ -2008,7 +2661,8 @@ def install_hermes_hook(dry_run: bool = False) -> dict[str, object]:
                 (
                     index
                     for index in range(hooks_index + 1, len(lines))
-                    if lines[index].strip() and not lines[index].startswith((" ", "\t", "#"))
+                    if lines[index].strip()
+                    and not lines[index].startswith((" ", "\t", "#"))
                 ),
                 len(lines),
             )
@@ -2021,7 +2675,9 @@ def install_hermes_hook(dry_run: bool = False) -> dict[str, object]:
                 None,
             )
             insert_at = post_index + 1 if post_index is not None else block_end
-            addition = entry if post_index is not None else "  post_tool_call:\n" + entry
+            addition = (
+                entry if post_index is not None else "  post_tool_call:\n" + entry
+            )
             lines.insert(insert_at, addition)
             updated = "".join(lines)
     if not dry_run:
@@ -2029,7 +2685,9 @@ def install_hermes_hook(dry_run: bool = False) -> dict[str, object]:
     return {"target": "hermes", "path": str(path), "changed": True, "dry_run": dry_run}
 
 
-def install_hooks(target: str = "all", dry_run: bool = False) -> list[dict[str, object]]:
+def install_hooks(
+    target: str = "all", dry_run: bool = False
+) -> list[dict[str, object]]:
     names = ["codex", "claude", "hermes"] if target == "all" else [target]
     results = []
     for name in names:
@@ -2474,9 +3132,7 @@ def route(
         fb_ranked = rank_candidates(intent, skills, favorites, usage_data)
         fb_positive = [item for item in fb_ranked if item[0] > 0]
         fb_top = fb_positive[0][0] if fb_positive else 0
-        fb_margin = (
-            fb_top - fb_positive[1][0] if len(fb_positive) > 1 else fb_top
-        )
+        fb_margin = fb_top - fb_positive[1][0] if len(fb_positive) > 1 else fb_top
         if (
             fb_positive
             and fb_top >= tw["no_workflow_min_score"]
@@ -2484,12 +3140,14 @@ def route(
         ):
             fb_floor = max(4, round(fb_top * 0.33))
             selected = [
-                skill
-                for points, _b, _a, skill in fb_positive
-                if points >= fb_floor
+                skill for points, _b, _a, skill in fb_positive if points >= fb_floor
             ][:max_selected]
             block = render_router_block(
-                intent, selected, len(skills), root_paths, favorites,
+                intent,
+                selected,
+                len(skills),
+                root_paths,
+                favorites,
                 recommended_tools,
             )
             return RouteResult(
@@ -2548,10 +3206,18 @@ def route(
             # bailing to "ambiguous", so --max 1 --strict returns a control skill.
             top2 = [positive[0][3], positive[1][3]]
             top2_control = all(
-                (words(s.name.replace("-", " ")) | words(s.description) | words(s.keywords))
+                (
+                    words(s.name.replace("-", " "))
+                    | words(s.description)
+                    | words(s.keywords)
+                )
                 & CONTROL_TOKENS
                 and len(
-                    (words(s.name.replace("-", " ")) | words(s.description) | words(s.keywords))
+                    (
+                        words(s.name.replace("-", " "))
+                        | words(s.description)
+                        | words(s.keywords)
+                    )
                     & CONTROL_TOKENS
                 )
                 >= 2
@@ -2563,9 +3229,11 @@ def route(
                 positive = []
                 decision = "ambiguous"
     confidence_floor = max(4, round(positive[0][0] * 0.33)) if positive else 0
-    selected = [skill for points, _base, _adaptive, skill in positive if points >= confidence_floor][
-        :max_selected
-    ]
+    selected = [
+        skill
+        for points, _base, _adaptive, skill in positive
+        if points >= confidence_floor
+    ][:max_selected]
     block = render_router_block(
         intent, selected, len(skills), root_paths, favorites, recommended_tools
     )
@@ -2760,6 +3428,88 @@ def catalog_summary(catalog_data: Catalog) -> dict[str, object]:
         "index_path": str(catalog_data.index_path),
         "tsv_path": str(skill_index_tsv_file(catalog_data.index_path)),
         "ttl_seconds": skill_index_ttl_seconds(),
+    }
+
+
+def catalog_skill_paths(
+    *, all_copies: bool = False, refresh_index: bool = False
+) -> tuple[list[Path], Catalog]:
+    catalog_data = load_catalog(refresh=refresh_index)
+    if all_copies:
+        paths = [Path(skill.path) for skill in scan_all_copies(catalog_data.roots)]
+    else:
+        paths = [Path(skill.path) for skill in catalog_data.skills]
+    return paths, catalog_data
+
+
+def skill_smoke_report(catalog_data: Catalog) -> dict[str, object]:
+    failures: list[dict[str, str]] = []
+    resolved_count = 0
+    invoked_count = 0
+    alias_redirects = 0
+    empty_usage = UsageData(signals={})
+    names = {skill.name.lower() for skill in catalog_data.skills}
+    for skill in catalog_data.skills:
+        resolved = resolve_skill(skill.name, catalog_data.skills)
+        if resolved is None or resolved.path != skill.path:
+            failures.append(
+                {
+                    "name": skill.name,
+                    "stage": "resolve",
+                    "message": "exact name did not resolve to its indexed path",
+                }
+            )
+            continue
+        resolved_count += 1
+        if not Path(skill.path).is_file():
+            failures.append(
+                {
+                    "name": skill.name,
+                    "stage": "read",
+                    "message": f"indexed path is missing: {skill.path}",
+                }
+            )
+            continue
+        if not skill.description.strip():
+            failures.append(
+                {
+                    "name": skill.name,
+                    "stage": "metadata",
+                    "message": "indexed description is empty",
+                }
+            )
+            continue
+        result = route(
+            skill.name,
+            catalog_data=catalog_data,
+            usage_data=empty_usage,
+        )
+        expected = canonical_skill_name(skill.name)
+        selected_names = [item.name.lower() for item in result.selected]
+        acceptable = skill.name.lower()
+        if expected in names and expected != acceptable:
+            acceptable = expected
+            alias_redirects += 1
+        if selected_names != [acceptable]:
+            failures.append(
+                {
+                    "name": skill.name,
+                    "stage": "invoke",
+                    "message": f"expected {[acceptable]}, got {selected_names}",
+                }
+            )
+            continue
+        invoked_count += 1
+    total = len(catalog_data.skills)
+    return {
+        "ok": not failures,
+        "framework": QUALITY_FRAMEWORK_VERSION,
+        "catalog": catalog_summary(catalog_data),
+        "total": total,
+        "resolved": resolved_count,
+        "invoked": invoked_count,
+        "alias_redirects": alias_redirects,
+        "failures": failures,
     }
 
 
@@ -3029,9 +3779,17 @@ def doctor_report(refresh_index: bool = False) -> dict[str, object]:
     report = usage_report(catalog_data, usage_data)
     tools = tool_usage_report(usage_data)
     drift = skill_drift_report(catalog_data.roots)
+    quality_report = validation_report(
+        Path(skill.path) for skill in catalog_data.skills
+    )
+    quality = {
+        key: quality_report[key]
+        for key in ("ok", "framework", "files", "errors", "warnings", "issue_counts")
+    }
     return {
-        "ok": usage_data.malformed == 0,
+        "ok": usage_data.malformed == 0 and quality_report["ok"],
         "catalog": catalog_summary(catalog_data),
+        "quality": quality,
         "telemetry_enabled": telemetry_enabled(),
         "learning_enabled": learning_enabled(),
         "raw_prompts_stored": False,
@@ -3277,6 +4035,23 @@ def main() -> int:
     p_jury.add_argument("--strict", action="store_true")
     p_jury.add_argument("--json", action="store_true")
     p_jury.add_argument("--refresh-index", action="store_true")
+    p_validate = sub.add_parser("validate")
+    p_validate.add_argument("--all-copies", action="store_true")
+    p_validate.add_argument("--strict", action="store_true")
+    p_validate.add_argument("--scripts", action="store_true")
+    p_validate.add_argument("--json", action="store_true")
+    p_validate.add_argument("--output")
+    p_validate.add_argument("--refresh-index", action="store_true")
+    p_repair = sub.add_parser("repair")
+    p_repair.add_argument("--all-copies", action="store_true")
+    p_repair.add_argument("--apply", action="store_true")
+    p_repair.add_argument("--json", action="store_true")
+    p_repair.add_argument("--output")
+    p_repair.add_argument("--refresh-index", action="store_true")
+    p_smoke = sub.add_parser("smoke")
+    p_smoke.add_argument("--json", action="store_true")
+    p_smoke.add_argument("--output")
+    p_smoke.add_argument("--refresh-index", action="store_true")
     args = parser.parse_args()
 
     if args.cmd == "route":
@@ -3354,6 +4129,71 @@ def main() -> int:
                 f"{summary['index_path']}\t{summary['tsv_path']}"
             )
         return 0
+    if args.cmd == "validate":
+        paths, _catalog_data = catalog_skill_paths(
+            all_copies=args.all_copies,
+            refresh_index=args.refresh_index,
+        )
+        report = validation_report(
+            paths,
+            spec_strict=args.strict,
+            check_scripts=args.scripts,
+        )
+        if args.json or args.output:
+            rendered = json.dumps(report, indent=2, ensure_ascii=False) + "\n"
+        else:
+            rendered = (
+                f"{'PASS' if report['ok'] else 'FAIL'}\t{report['files']} files\t"
+                f"{report['errors']} errors\t{report['warnings']} warnings\n"
+            )
+            rendered += "\n".join(
+                f"{count}\t{code}" for code, count in report["issue_counts"].items()
+            )
+            if report["issue_counts"]:
+                rendered += "\n"
+        if args.output:
+            atomic_write_text(Path(args.output).expanduser(), rendered)
+            print(str(Path(args.output).expanduser()))
+        else:
+            print(rendered, end="")
+        return 0 if report["ok"] else 1
+    if args.cmd == "repair":
+        paths, _catalog_data = catalog_skill_paths(
+            all_copies=args.all_copies,
+            refresh_index=args.refresh_index,
+        )
+        report = repair_report(paths, apply=args.apply)
+        if args.apply and report["changed"]:
+            report["catalog_after"] = catalog_summary(load_catalog(refresh=True))
+        if args.json or args.output:
+            rendered = json.dumps(report, indent=2, ensure_ascii=False) + "\n"
+        else:
+            mode = "APPLIED" if args.apply else "DRY-RUN"
+            rendered = f"{mode}\t{report['changed']} files\n"
+            if report["backup_dir"]:
+                rendered += f"backup\t{report['backup_dir']}\n"
+        if args.output:
+            atomic_write_text(Path(args.output).expanduser(), rendered)
+            print(str(Path(args.output).expanduser()))
+        else:
+            print(rendered, end="")
+        return 0
+    if args.cmd == "smoke":
+        report = skill_smoke_report(load_catalog(refresh=args.refresh_index))
+        if args.json or args.output:
+            rendered = json.dumps(report, indent=2, ensure_ascii=False) + "\n"
+        else:
+            rendered = (
+                f"{'PASS' if report['ok'] else 'FAIL'}\t{report['total']} skills\t"
+                f"{report['resolved']} resolved\t{report['invoked']} invoked\t"
+                f"{len(report['failures'])} failures\n"
+            )
+        if args.output:
+            atomic_write_text(Path(args.output).expanduser(), rendered)
+            print(str(Path(args.output).expanduser()))
+        else:
+            print(rendered, end="")
+        return 0 if report["ok"] else 1
     if args.cmd == "find":
         catalog_data = load_catalog(refresh=args.refresh_index)
         matches = find_skills(args.query, catalog_data.skills, args.limit)
@@ -3371,7 +4211,9 @@ def main() -> int:
         return 0 if matches else 1
     if args.cmd == "resolve":
         catalog_data = load_catalog(refresh=args.refresh_index)
-        requested_name = canonical_skill_name(args.name) if args.canonical else args.name
+        requested_name = (
+            canonical_skill_name(args.name) if args.canonical else args.name
+        )
         skill = resolve_skill(requested_name, catalog_data.skills)
         if skill is None:
             return 1
@@ -3489,16 +4331,19 @@ def main() -> int:
     if args.cmd == "inventory":
         catalog_data = load_catalog(refresh=args.refresh_index)
         usage_data = load_usage_data(include_routes=True)
-        rendered = json.dumps(
-            {
-                "skills": usage_report(catalog_data, usage_data, include_rows=True),
-                "tools": tool_usage_report(usage_data, include_rows=True),
-                "aliases": skill_alias_report(catalog_data),
-                "drift": skill_drift_report(catalog_data.roots, include_rows=True),
-            },
-            indent=2,
-            ensure_ascii=False,
-        ) + "\n"
+        rendered = (
+            json.dumps(
+                {
+                    "skills": usage_report(catalog_data, usage_data, include_rows=True),
+                    "tools": tool_usage_report(usage_data, include_rows=True),
+                    "aliases": skill_alias_report(catalog_data),
+                    "drift": skill_drift_report(catalog_data.roots, include_rows=True),
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
         if args.output:
             atomic_write_text(Path(args.output).expanduser(), rendered)
             print(str(Path(args.output).expanduser()))

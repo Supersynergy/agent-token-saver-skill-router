@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- Add `scripts/si_autotune.py`: hill-climb tuner for the ten scoring weights
+  against the labeled eval set; persists only strictly better winners and
+  restores previous state otherwise (referenced by `TUNED_DEFAULTS`, now real).
+- Routing-quality pass 2026-08-14: eval ground truth repaired and skill tag
+  fixes lifted precision@1 from 0.75 to 0.93 and precision@3 to 1.00 on the
+  977-skill fleet at unchanged 14.6 ms median latency.
+- Add dependency-free `si validate`, `si repair`, and `si smoke` gates based on
+  the open Agent Skills format plus the local exact-resolution contract.
+- Add atomic safe frontmatter repair with private content backups and dry-run by
+  default; no skill scripts are executed during repair.
+- Prefer shallow portable copies inside a skill root so nested mirrors cannot
+  shadow canonical top-level skills.
+- Add optional static Python, shell, and JavaScript syntax checks and document
+  the boundary between structural proof and skill-specific live verification.
+- Include the canonical runtime-quality gate in `si doctor` and add a German
+  full-fleet repair regression to the deterministic routing jury.
+
 ## 1.6.2 — 2026-07-15
 
 - Normalize common German web-research verbs, sources, recency, citations,

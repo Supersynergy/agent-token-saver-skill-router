@@ -409,6 +409,24 @@ That writes:
 
 ---
 
+### Validate and repair the complete skill catalog
+
+```bash
+si validate                         # canonical runtime contract
+si validate --all-copies --strict   # portable Agent Skills specification
+si validate --all-copies --scripts  # static script syntax checks
+si repair --all-copies              # dry-run
+si repair --all-copies --apply      # atomic edits plus private backups
+si index --refresh
+si smoke --refresh-index            # exact resolve/invoke for every skill
+si doctor --refresh-index --json    # catalog health includes the runtime gate
+```
+
+See [`docs/SKILL-QUALITY-FRAMEWORK.md`](docs/SKILL-QUALITY-FRAMEWORK.md) for
+the guarantees, severities, and safe-fix boundary.
+
+---
+
 ## Example routes from real local skills
 
 These are the kind of selections the router produces from a large local skill library:
