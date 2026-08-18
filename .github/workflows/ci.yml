@@ -9,17 +9,29 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
       - run: python3 -m py_compile scripts/agent_token_saver.py
       - run: python3 -m unittest discover -s tests -v
       - run: bash -n install.sh
 
   neutral-ggcoder:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
       - name: Fresh HOME install and zero-skill gate
         run: |
           export HOME="$(mktemp -d)"
@@ -29,3 +41,21 @@ jobs:
           "$HOME/.local/bin/agent-skill-route" \
             route "What is 2 plus 2?" --strict --json > result.json
           python3 -c 'import json; assert json.load(open("result.json"))["selected"] == []'
+
+  # The README's `curl | bash` path clones instead of using a checkout, so it is
+  # a separate code path and needs its own coverage.
+  piped-install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          path: source
+      - name: Install the way a new user does
+        run: |
+          export HOME="$(mktemp -d)"
+          cd "$(mktemp -d)"
+          ATSR_REPO_URL="$GITHUB_WORKSPACE/source" \
+            bash "$GITHUB_WORKSPACE/source/install.sh" ggcoder
+          test -x "$HOME/.local/bin/agent-skill-route"
+          "$HOME/.local/bin/agent-skill-route" route "ship a landing page" --json >/dev/null

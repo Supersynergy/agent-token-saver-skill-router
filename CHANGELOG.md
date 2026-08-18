@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- `install.sh`: the piped `curl | bash` path cloned into `mktemp -d` and never
+  removed it, leaving a full clone behind on every install. It now cleans up on
+  exit and fails with a clear message when `python3` or `git` is missing
+  instead of erroring out mid-clone. `ATSR_REPO_URL` allows a local source for
+  testing.
+- CI runs tests and the neutral install on macOS as well as Linux, and covers
+  the piped install path from the README, which no job exercised before.
+- README states supported OS and runtime requirements, and shows license/CI
+  badges.
 - Add natural exact-name routing without `$` syntax and automatic bundles of
   one primary plus up to four confidence-gated complementary support skills;
   mixed requests retain the inferred task primary ahead of named supports.

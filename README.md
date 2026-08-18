@@ -2,6 +2,10 @@
 
 **Your agent reads the few skills the task needs, not forty.**
 
+[![MIT](https://img.shields.io/badge/license-MIT-1c7c54.svg)](LICENSE)
+[![CI](https://github.com/Supersynergy/agent-token-saver-skill-router/actions/workflows/ci.yml/badge.svg)](https://github.com/Supersynergy/agent-token-saver-skill-router/actions/workflows/ci.yml)
+![Agents](https://img.shields.io/badge/agents-Claude%20%7C%20Codex%20%7C%20Hermes%20%7C%20GG%20Coder%20%7C%20OpenCode-5b5bd6)
+
 Skill systems paste every `SKILL.md` into the prompt before the agent has any idea
 which one it needs. You pay for all of them, on every turn.
 
@@ -50,7 +54,15 @@ Everything (Hermes, Claude Code, Codex, GG Coder, OpenCode, repo-local):
 curl -fsSL https://raw.githubusercontent.com/Supersynergy/agent-token-saver-skill-router/main/install.sh | bash -s -- all
 ```
 
-Python 3 stdlib only. No package manager, no build step. Uninstall = delete the skill folder.
+### Requirements
+
+| | |
+|---|---|
+| **Required** | Python **3.11+**. `git` too, but only for the piped `curl \| bash` install above. |
+| **OS** | Linux and macOS, both covered by CI on every push. On Windows use WSL2; the installer is POSIX shell. |
+| **Dependencies** | None. Standard library only — no package manager, no build step, no daemon. |
+
+Uninstall = delete the skill folder.
 
 ---
 
