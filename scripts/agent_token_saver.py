@@ -833,6 +833,18 @@ NATURAL_SKILL_CUE_RE = re.compile(
     r"laden|mit|nutze|nutzen|verwende|verwenden)\b",
     re.IGNORECASE,
 )
+# "do not use the taste skill" contains the same cue and phrase as a request to
+# load it. Inference from prose must respect an explicit refusal, otherwise the
+# router loads exactly what the user just declined.
+NEGATION_CUE_RE = re.compile(
+    r"n't\b|\b(?:never|not|without|avoid|avoids|avoiding|skip|skips|skipping|"
+    r"instead\s+of|rather\s+than|"
+    r"nicht|kein(?:e|en|er)?|ohne|niemals|statt|anstatt|vermeide|vermeiden)\b",
+    re.IGNORECASE,
+)
+# A cue only negates within its own clause: "use best practices, not the old
+# approach" must still load the skill.
+CLAUSE_BOUNDARY_CHARS = ".;!?,\n"
 CLAUSE_SPLIT_RE = re.compile(
     r"(?:[.!?;\n]+|,\s*|\b(?:and then|then|and|plus|sowie|und dann|danach|und)\b)",
     re.IGNORECASE,
@@ -3147,8 +3159,21 @@ def normalized_phrase_text(text: str) -> str:
     return re.sub(r"\s+", " ", normalized).strip()
 
 
+def mention_is_negated(text: str, start: int) -> bool:
+    """True when a negation cue governs the phrase at `start` within its clause."""
+    clause_start = max(
+        (text.rfind(char, 0, start) for char in CLAUSE_BOUNDARY_CHARS), default=-1
+    )
+    return bool(NEGATION_CUE_RE.search(text[clause_start + 1 : start]))
+
+
 def mentioned_skill_names(intent: str, skills: list[Skill]) -> list[str]:
-    """Resolve `$names` plus naturally named multi-word skills in user order."""
+    """Resolve `$names` plus naturally named multi-word skills in user order.
+
+    A naturally named skill is inferred from prose, so an explicit refusal in
+    the same clause drops it. A `$name` is a deliberate invocation sigil and is
+    always honoured.
+    """
     mentions: list[tuple[int, int, str, bool]] = [
         (match.start(), match.end(), match.group(1).lower(), True)
         for match in EXPLICIT_SKILL_RE.finditer(intent)
@@ -3173,7 +3198,11 @@ def mentioned_skill_names(intent: str, skills: list[Skill]) -> list[str]:
                     normalized_intent[end].isalnum()
                     or normalized_intent[end] in "_+-"
                 )
-                if before_ok and after_ok:
+                if (
+                    before_ok
+                    and after_ok
+                    and not mention_is_negated(normalized_intent, index)
+                ):
                     mentions.append((index, end, skill.name.lower(), False))
                 start = index + 1
     # Longest phrase wins when names overlap: "macos-computer-use" must not
@@ -3215,6 +3244,37 @@ def without_natural_skill_mentions(intent: str, names: list[str]) -> str:
         ) + r"(?![\w+])"
         masked = re.sub(pattern, " ", masked, flags=re.IGNORECASE)
     return NATURAL_SKILL_CUE_RE.sub(" ", masked)
+
+
+def negated_skill_names(intent: str, skills: list[Skill]) -> list[str]:
+    """Skill names whose phrase appears under a negation cue in its clause."""
+    normalized = normalized_phrase_text(intent)
+    negated = []
+    for skill in skills:
+        phrase = normalized_phrase_text(skill.name)
+        if not phrase:
+            continue
+        index = normalized.find(phrase)
+        while index >= 0:
+            end = index + len(phrase)
+            bounded = (index == 0 or not normalized[index - 1].isalnum()) and (
+                end == len(normalized) or not normalized[end].isalnum()
+            )
+            if bounded and mention_is_negated(normalized, index):
+                negated.append(skill.name.lower())
+                break
+            index = normalized.find(phrase, index + 1)
+    return negated
+
+
+def without_negated_skill_mentions(intent: str, skills: list[Skill]) -> str:
+    """Drop refused skill phrases so they cannot score as evidence.
+
+    Only the named phrase is removed, never the whole clause: "fix the bug
+    without best practices" must keep "fix the bug" as routable intent.
+    """
+    names = negated_skill_names(intent, skills)
+    return without_natural_skill_mentions(intent, names) if names else intent
 
 
 def actionable_clauses(intent: str) -> list[str]:
@@ -3425,6 +3485,9 @@ def rank_candidates(
     usage_data: UsageData | None = None,
 ) -> list[tuple[int, int, int, Skill]]:
     """Return total, deterministic base, adaptive tie-breaker, and skill."""
+    # Single choke point for every scoring path, so a refused skill cannot win
+    # on content score after mention detection already declined it.
+    intent = without_negated_skill_mentions(intent, skills)
     available_names = {skill.name.lower() for skill in skills}
     routable = [
         skill

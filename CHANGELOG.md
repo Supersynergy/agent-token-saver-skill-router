@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Respect refusal in natural-language routing. "do not use the taste skill"
+  carries the same cue (`use`) and the same phrase as a request to load it, so
+  the router loaded exactly what the user had just declined — and `--strict`
+  did not help, because a natural name takes the explicit path that skips the
+  score and margin gates. Negation is now checked at two levels: mention
+  detection, and `rank_candidates` as the single choke point for every scoring
+  path, so a refused skill cannot return via content score. A cue only negates
+  inside its own clause, so "use best practices, not the old approach" still
+  loads. Only the refused phrase is dropped, never the surrounding task. A
+  `$name` sigil stays a deliberate invocation and is still honoured.
+  Verified: labeled 28-case benchmark holds at 28/28 P@1 and jury at 12/12.
+
 ## 1.7.0 — 2026-08-18
 
 - `install.sh`: the piped `curl | bash` path cloned into `mktemp -d` and never

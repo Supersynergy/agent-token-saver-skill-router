@@ -203,6 +203,73 @@ class AgentTokenSaverTests(unittest.TestCase):
                 [skill.name for skill in natural.selected], ["macos-computer-use"]
             )
 
+    def test_refused_skill_is_not_loaded(self):
+        """"do not use X" carries the same cue and phrase as a request for X."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(root, "taste-skill", "Anti-slop frontend design for landing pages.")
+            write_skill(root, "core-web-vitals", "Optimize Core Web Vitals LCP INP CLS.")
+
+            for intent in (
+                "do not use the taste skill, just fix the typo",
+                "never use core web vitals here",
+                "fix the bug without using the taste skill",
+                "nutze nicht die taste skill, behebe nur den Tippfehler",
+            ):
+                with self.subTest(intent=intent):
+                    result = mod.route(intent, roots=[root], strict=True)
+                    self.assertEqual([skill.name for skill in result.selected], [])
+
+    def test_negation_after_the_name_still_loads_the_skill(self):
+        """A cue only negates inside its own clause."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(root, "taste-skill", "Anti-slop frontend design for landing pages.")
+
+            result = mod.route(
+                "use the taste skill, not the old template", roots=[root], strict=True
+            )
+
+            self.assertEqual(
+                [skill.name for skill in result.selected], ["taste-skill"]
+            )
+
+    def test_refusal_does_not_swallow_the_rest_of_the_task(self):
+        """Only the refused phrase is dropped, never the surrounding intent."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(root, "taste-skill", "Anti-slop frontend design for landing pages.")
+            write_skill(
+                root,
+                "fixing-accessibility",
+                "Audit and fix accessibility, ARIA labels and keyboard navigation.",
+            )
+
+            result = mod.route(
+                "fix the keyboard navigation accessibility audit, "
+                "but do not use the taste skill",
+                roots=[root],
+                strict=True,
+            )
+
+            names = [skill.name for skill in result.selected]
+            self.assertIn("fixing-accessibility", names)
+            self.assertNotIn("taste-skill", names)
+
+    def test_explicit_dollar_sigil_is_honoured_over_prose_negation(self):
+        """`$name` is a deliberate invocation, not an inference from prose."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(root, "taste-skill", "Anti-slop frontend design for landing pages.")
+
+            result = mod.route(
+                "do not use $taste-skill", roots=[root], strict=True
+            )
+
+            self.assertEqual(
+                [skill.name for skill in result.selected], ["taste-skill"]
+            )
+
     def test_natural_named_support_does_not_displace_underlying_primary(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td) / "skills"
