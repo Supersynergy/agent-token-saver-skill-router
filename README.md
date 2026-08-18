@@ -216,6 +216,12 @@ si bench "debug failing pytest in Hermes prompt builder"
 si route '$security-hardening $release-excellence' --max 2
 si route 'Use Clear Thought, Systematic Debugging, Verification Loop, Security Review, and Agent Efficiency Orchestrator' --strict --json
 si route 'Research current sources; create a PDF; send it by email; review security; verify the result' --max 5 --strict --json
+
+# 10-path ceiling: a named production-shipping stack in one call. Automatic
+# fuzzy routing stays capped at five (default); an explicit stack like this
+# needs --max 10 to use the full ceiling. Skill names are examples -- swap in
+# whatever your own catalog has installed.
+si route '$taste-skill $best-practices $security-review $accessibility $core-web-vitals $seo $web-design-guidelines $dsgvo-report $requesting-code-review $verification-loop' --max 10 --strict --json
 ```
 
 `si` and `agent-skill-route` are the same stdlib CLI. The installer creates
