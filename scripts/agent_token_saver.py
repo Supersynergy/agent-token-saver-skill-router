@@ -3,6 +3,10 @@
 
 Python stdlib only. Works as a small CLI helper for Hermes, Claude Code,
 Codex CLI, OpenCode, Cursor, Windsurf, and repo-local agents.
+
+Runs on Python 3.9+ so the macOS system interpreter is enough, and is tested
+up to the latest stable release. The floor is a compatibility guarantee, not a
+recommendation: any newer Python on PATH is used automatically.
 """
 
 from __future__ import annotations
@@ -26,6 +30,17 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Iterable
 from urllib.parse import unquote
+
+MIN_PYTHON = (3, 9)
+if sys.version_info < MIN_PYTHON:  # pragma: no cover - depends on interpreter
+    # Without this, an old interpreter fails somewhere deep in the stdlib with
+    # a message that says nothing about the actual problem.
+    sys.exit(
+        "agent-token-saver-skill-router needs Python "
+        f"{MIN_PYTHON[0]}.{MIN_PYTHON[1]}+, but this is "
+        f"{sys.version_info[0]}.{sys.version_info[1]}. "
+        "Run it with a newer interpreter, e.g. `python3.14 agent-skill-route ...`."
+    )
 
 SKILL_NAME = "agent-token-saver-skill-router"
 # Compatibility names stay resolvable for explicit users and old hosts. A

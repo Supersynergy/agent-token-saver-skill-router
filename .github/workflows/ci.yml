@@ -12,11 +12,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
-        # Floor and latest stable. 3.9 is what macOS ships as /usr/bin/python3,
-        # so a user with no package manager still works; 3.14 proves the tool
-        # is not stuck on an old runtime.
-        python-version: ["3.9", "3.14"]
+        # Every supported version on Linux; floor and latest on macOS, which is
+        # the expensive runner. 3.9 is what macOS ships as /usr/bin/python3, so
+        # a user with no package manager still works; 3.14 proves the tool is
+        # not stuck on an old runtime.
+        os: [ubuntu-latest]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+        include:
+          - os: macos-latest
+            python-version: "3.9"
+          - os: macos-latest
+            python-version: "3.14"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

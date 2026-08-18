@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.13
+#!/usr/bin/env python3
 """si-autotune — grid-race scoring weights against the labeled eval set.
 
 Referenced by si's TUNED_DEFAULTS comment but previously missing. Candidate

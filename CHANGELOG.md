@@ -2,8 +2,13 @@
 
 ## Unreleased
 
-- CI now covers Python 3.14 (latest stable) instead of 3.13, so the matrix is
-  floor plus latest. Also verified locally on 3.15rc1, the next stable.
+- CI now runs the full test suite on every supported Python, **3.9 through
+  3.14**, on Linux, plus the floor and latest on macOS. Previously only 3.9
+  and 3.13 were tested; also verified locally on 3.15rc1, the next stable.
+- `scripts/agent_token_saver.py` exits with a clear message on Python <3.9
+  instead of failing deep inside the stdlib. Verified on 3.8.
+- Fixed `scripts/si_autotune.py`'s shebang, which hardcoded `python3.13` and
+  so failed on every other version, including the router's own 3.9 floor.
 
 - Correct the documented Python floor from 3.11+ to **3.9+**, and prove it: the
   code carries `from __future__ import annotations` and uses no 3.10+ syntax, so
