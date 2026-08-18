@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Correct the documented Python floor from 3.11+ to **3.9+**, and prove it: the
+  code carries `from __future__ import annotations` and uses no 3.10+ syntax, so
+  it runs on macOS's built-in `/usr/bin/python3` (3.9.6). CI now runs the suite
+  on 3.9 and 3.13 across Linux and macOS, so the claim is verified rather than
+  asserted. The previous requirement would have pushed users to install a Python
+  they do not need.
+
 - Respect refusal in natural-language routing. "do not use the taste skill"
   carries the same cue (`use`) and the same phrase as a request to load it, so
   the router loaded exactly what the user had just declined — and `--strict`

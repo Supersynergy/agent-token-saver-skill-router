@@ -58,8 +58,8 @@ curl -fsSL https://raw.githubusercontent.com/Supersynergy/agent-token-saver-skil
 
 | | |
 |---|---|
-| **Required** | Python **3.11+**. `git` too, but only for the piped `curl \| bash` install above. |
-| **OS** | Linux and macOS, both covered by CI on every push. On Windows use WSL2; the installer is POSIX shell. |
+| **Required** | Python **3.9+**, so macOS's built-in `/usr/bin/python3` is enough. `git` too, but only for the piped `curl \| bash` install above. |
+| **OS** | Linux and macOS on Python 3.9 and 3.13, all covered by CI on every push. On Windows use WSL2; the installer is POSIX shell. |
 | **Dependencies** | None. Standard library only — no package manager, no build step, no daemon. |
 
 Uninstall = delete the skill folder.
