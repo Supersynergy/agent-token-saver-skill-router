@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- CI now covers Python 3.14 (latest stable) instead of 3.13, so the matrix is
+  floor plus latest. Also verified locally on 3.15rc1, the next stable.
+
 - Correct the documented Python floor from 3.11+ to **3.9+**, and prove it: the
   code carries `from __future__ import annotations` and uses no 3.10+ syntax, so
   it runs on macOS's built-in `/usr/bin/python3` (3.9.6). CI now runs the suite
