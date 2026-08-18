@@ -3,7 +3,7 @@ name: agent-token-saver-skill-router
 description: Use when an agent has many skills/tools/prompts and must cut prompt tokens by routing adaptively. Runs routing outside model context when possible, indexes metadata on disk, lazy-loads one primary plus up to four complementary support skills, and benchmarks savings across agents.
 license: MIT
 metadata:
-  version: 1.6.2
+  version: 1.7.0
   author: Supersynergy
   hermes:
     tags: [tokens, skills, router, prompt-cache, agent-teams, capsule, claude-code, codex, hermes]

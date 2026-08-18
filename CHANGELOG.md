@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.7.0 — 2026-08-18
+
 - `install.sh`: the piped `curl | bash` path cloned into `mktemp -d` and never
   removed it, leaving a full clone behind on every install. It now cleans up on
   exit and fails with a clear message when `python3` or `git` is missing
