@@ -13,10 +13,19 @@ Given a task intent and local skill roots, the router returns:
 3. zero or one separately ranked installed tool recommendation,
 4. a benchmark comparing full-catalog vs router-token estimates.
 
-The automatic selected set is zero or one primary skill. The CLI permits up to
-10 cold paths via explicit `--max 10` for a broad controller manifest; 10 is a
-hard ceiling. A controller loads one skill per phase and gives each subagent
-only its own primary skill path, never the whole manifest.
+The automatic selected set is zero, one primary skill, or one primary plus up
+to four complementary support skills. A support must either win an independently
+confident task clause or cover concrete intent evidence not covered by the
+existing bundle. The CLI permits up to 10 paths only for explicitly named
+stacks; fuzzy routing is capped at five. A controller gives each subagent only
+its own primary skill path, never the whole manifest.
+
+Natural exact-name mentions are explicit without requiring `$` syntax when a
+use/load/combine cue is present. A pure named stack preserves mention order. A
+mixed request infers its task primary from the remaining intent, then appends
+the named skills as supports. Ambiguous and low-confidence routes load nothing
+and expose up to three scored `alternatives`. Every selected skill has a
+`primary` or `support` role in JSON and text output.
 
 Every CLI/hook route appends privacy-safe decision telemetry containing an
 intent hash but no raw prompt. Usage reports merge router selections with

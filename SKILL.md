@@ -1,6 +1,6 @@
 ---
 name: agent-token-saver-skill-router
-description: Use when an agent has many skills/tools/prompts and must cut prompt tokens by routing adaptively. Runs routing outside model context when possible, indexes metadata on disk, lazy-loads zero or one primary skill by default, and benchmarks savings across agents.
+description: Use when an agent has many skills/tools/prompts and must cut prompt tokens by routing adaptively. Runs routing outside model context when possible, indexes metadata on disk, lazy-loads one primary plus up to four complementary support skills, and benchmarks savings across agents.
 license: MIT
 metadata:
   version: 1.6.2
@@ -48,15 +48,17 @@ Default load budget:
 
 | Task | Skills to load |
 |---|---:|
-| Automatic route | 0-1 |
-| Explicit multi-domain task | one primary; extra paths stay cold until their phase |
+| Automatic single-phase route | 0-1 |
+| Automatic multi-phase route | one primary plus up to four complementary supports |
+| Explicit named stack | up to 10 in mention order |
 | Production/security/release | one primary skill per phase |
-| Broad controller manifest | 0-3 cold paths normally; `--max 10` only when explicit |
+| Broad controller manifest | `--max 10` only when explicitly named |
 
 Stop loading once the next concrete action is clear.
 
-`10` is a hard ceiling, not a default. Keep one primary skill active in a
-worker; the controller may reserve cold paths for a distinct phase or blocker.
+Automatic fuzzy routing stops at five. `10` is the hard ceiling for an explicit
+named stack, not a fuzzy-routing default. Keep one primary skill active in a
+worker; the controller may reserve support paths for a distinct phase or blocker.
 Legacy in-context routing controllers are explicit-only so automatic routing
 cannot recurse into another skill loader.
 
@@ -73,7 +75,7 @@ Check the cheapest available source first:
 1. Explicit `$SkillName` from the user.
 2. Canonical cache (`~/.cache/agent-token-saver/skills-index.json`).
 3. Grep-friendly `skills.idx` or bounded `SKILL.md` frontmatter.
-4. Full `SKILL.md` body only for the single selected winner.
+4. Full `SKILL.md` bodies only for the selected primary/support set.
 5. External search only if local discovery misses.
 
 Common roots:
@@ -107,9 +109,11 @@ Common roots:
    - User favorites win close calls; generic tokens (matching many skills) are down-weighted.
    - Frontmatter tags participate in scoring; for debugging/testing work, skills
      under `software-development` outrank unrelated domain tutorials.
-5. **Select** zero or one primary workflow skill automatically.
-6. **Load** only that winner. Resolve extra paths only after an explicit phase
-   change, blocker, or user-named stack.
+5. **Select** zero or one primary workflow skill, then add a support only when
+   an independently confident task clause contributes new concrete evidence.
+6. **Load** at most five automatic selections. Preserve mention order for a
+   pure named stack. In a mixed request, infer the task primary first and append
+   naturally named skills as supports.
 7. **Execute** with tools.
 8. **Benchmark** token savings when changing router behavior.
 
@@ -154,18 +158,20 @@ ranking.
 
 ## Stacks, Subagents, and Processes
 
-- Default: `route "<task>"` returns at most one active skill.
-- Broad task: `route "<task>" --max 10` permits an explicit 10-skill manifest,
-  but this is not the normal agent-team path.
+- Default: `route "<task>"` returns zero, one primary, or a complementary bundle
+  of one primary plus at most four supports.
+- Explicit names: `$skill-name` syntax or natural “use A, B, and C” wording
+  preserves mention order. `--max 10` permits a named 10-skill manifest; fuzzy
+  routing remains capped at five.
 - Controller: load only the primary skill needed for its next decision. Hand a
   subagent only its own primary path plus a compact task contract; do not forward
   the controller's full stack or raw catalog.
 - Reserve the remaining paths for phase changes (for example implementation →
   release → security review). Load a reserve skill only when it changes the
   next action.
-- Explicit `$skill-name` references retain their order and can fill all 10
-  slots. Fuzzy results remain a shortlist, not an instruction to read ten
-  bodies immediately.
+- Explicit references retain their order and can fill all 10 slots. Fuzzy
+  support results must cover a distinct phase; score-near alternatives are
+  exposed under `consider` and are not loaded.
 
 ## Agent teams
 

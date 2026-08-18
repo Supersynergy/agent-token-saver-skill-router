@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Add natural exact-name routing without `$` syntax and automatic bundles of
+  one primary plus up to four confidence-gated complementary support skills;
+  mixed requests retain the inferred task primary ahead of named supports.
+- Add visible `primary`/`support` roles and scored `alternatives` for rejected
+  ambiguous routes; keep explicit named stacks capped at 10.
+- Expand German normalization and phrase intent for router governance, generic
+  runtime diagnosis, GitHub PR review, and landing-page load performance.
+- Raise the live 28-case labeled routing benchmark from 26/28 to 28/28 at P@1
+  while retaining zero-skill ambiguity gates.
 - Add `scripts/si_autotune.py`: hill-climb tuner for the ten scoring weights
   against the labeled eval set; persists only strictly better winners and
   restores previous state otherwise (referenced by `TUNED_DEFAULTS`, now real).

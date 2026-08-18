@@ -123,12 +123,15 @@ STOPWORDS = {
     "with",
     "without",
     "what",
+    "why",
     "your",
     "builder",
     "bei",
     "alle",
     "allen",
     "alles",
+    "also",
+    "auch",
     "das",
     "dem",
     "den",
@@ -140,18 +143,48 @@ STOPWORDS = {
     "einem",
     "einen",
     "einer",
+    "eines",
+    "es",
     "für",
     "fuer",
     "im",
+    "ich",
     "ist",
     "mit",
     "muss",
     "müssen",
     "muessen",
     "noch",
+    "nach",
+    "nur",
     "oder",
+    "etwas",
+    "haben",
+    "hat",
+    "jede",
+    "jeder",
+    "jedes",
+    "mach",
+    "mache",
+    "machen",
+    "macht",
     "sind",
+    "sich",
+    "mal",
+    "war",
+    "warum",
+    "weshalb",
+    "wieso",
+    "wirklich",
+    "wir",
+    "wofür",
+    "wofuer",
     "und",
+    "unser",
+    "unsere",
+    "unseren",
+    "soll",
+    "sollen",
     "vom",
     "von",
     "werden",
@@ -183,6 +216,10 @@ TOKEN_NORMALIZATION = {
     "diagnoses": "debug",
     "diagnosis": "debug",
     "diagnostic": "debug",
+    "routed": "route",
+    "router": "route",
+    "routers": "route",
+    "routing": "route",
     "improvement": "optimize",
     "improvements": "optimize",
     "extracted": "extract",
@@ -191,14 +228,48 @@ TOKEN_NORMALIZATION = {
     "contacts": "contact",
     "websites": "website",
     "capabilities": "capability",
+    "claims": "claim",
+    "documents": "document",
+    "sources": "source",
     "updated": "update",
     "updates": "update",
     "updating": "update",
     "outputs": "output",
+    "verified": "verify",
+    "verifies": "verify",
+    "verifying": "verify",
+    "verification": "verify",
+    "validated": "validate",
+    "validates": "validate",
+    "validating": "validate",
+    "validation": "validate",
     "subagents": "subagent",
     "teams": "team",
     "tokens": "token",
     "tools": "tool",
+    "prompts": "prompt",
+    "libraries": "library",
+    "bibliothek": "library",
+    "bibliotheken": "library",
+    "sammlung": "library",
+    "sammlungen": "library",
+    "promptbibliothek": "prompt",
+    "promptbibliotheken": "prompt",
+    "promptquelle": "prompt",
+    "promptquellen": "prompt",
+    "promptsammlung": "prompt",
+    "promptsammlungen": "prompt",
+    "evaluation": "evaluate",
+    "evaluations": "evaluate",
+    "selected": "select",
+    "selecting": "select",
+    "selection": "select",
+    "synthesis": "synthesize",
+    "syntheses": "synthesize",
+    "synthesized": "synthesize",
+    "synthesizing": "synthesize",
+    "invalidation": "invalidate",
+    "invalidations": "invalidate",
     "angewendet": "use",
     "anwenden": "use",
     "auflisten": "list",
@@ -206,7 +277,7 @@ TOKEN_NORMALIZATION = {
     "aufraeumen": "cleanup",
     "aufgeräumt": "cleanup",
     "aufgeraeumt": "cleanup",
-    "auswahl": "selection",
+    "auswahl": "select",
     "baue": "build",
     "bauen": "build",
     "erstelle": "create",
@@ -223,6 +294,12 @@ TOKEN_NORMALIZATION = {
     "selbstlernend": "learn",
     "teste": "test",
     "testen": "test",
+    "testfall": "test",
+    "testfälle": "test",
+    "testfaelle": "test",
+    "reproduzierbar": "reproducible",
+    "feste": "fixed",
+    "festen": "fixed",
     "verbessere": "optimize",
     "verbessert": "optimize",
     "verbessern": "optimize",
@@ -232,6 +309,28 @@ TOKEN_NORMALIZATION = {
     "überlegen": "analyze",
     "ueberlege": "analyze",
     "ueberlegen": "analyze",
+    "maximiere": "optimize",
+    "maximieren": "optimize",
+    "maximiert": "optimize",
+    "kombiniere": "combine",
+    "kombinieren": "combine",
+    "kombiniert": "combine",
+    "combination": "combine",
+    "combinations": "combine",
+    "ergänzend": "complementary",
+    "ergänzende": "complementary",
+    "ergänzenden": "complementary",
+    "ergaenzend": "complementary",
+    "ergaenzende": "complementary",
+    "mehrsprachig": "multilingual",
+    "mehrsprachige": "multilingual",
+    "mehrsprachiges": "multilingual",
+    "natürlich": "natural",
+    "natürliche": "natural",
+    "natürliches": "natural",
+    "natuerlich": "natural",
+    "natuerliche": "natural",
+    "natuerliches": "natural",
     "aktualisiere": "update",
     "aktualisieren": "update",
     "aktuell": "current",
@@ -247,12 +346,27 @@ TOKEN_NORMALIZATION = {
     "herunterladen": "download",
     "quelle": "source",
     "quellen": "source",
+    "überblick": "overview",
+    "ueberblick": "overview",
+    "gespeichert": "local",
+    "gespeicherte": "local",
+    "gespeicherten": "local",
     "recherche": "research",
     "recherchiere": "research",
     "recherchieren": "research",
     "recherchiert": "research",
     "suche": "search",
     "suchen": "search",
+    "durchsuche": "search",
+    "durchsuchen": "search",
+    "synthetisiere": "synthesize",
+    "synthetisieren": "synthesize",
+    "synthese": "synthesize",
+    "beleg": "evidence",
+    "belege": "evidence",
+    "belegen": "evidence",
+    "widerlege": "invalidate",
+    "widerlegen": "invalidate",
     "webquelle": "web",
     "webquellen": "web",
     "webseite": "website",
@@ -283,6 +397,7 @@ TOKEN_NORMALIZATION = {
     "starten": "start",
     "zeige": "show",
     "zeigen": "show",
+    "anzeigen": "show",
     "schreibe": "write",
     "schreiben": "write",
     "analysiere": "analyze",
@@ -318,12 +433,39 @@ TOKEN_NORMALIZATION = {
     "planen": "plan",
     "finde": "find",
     "finden": "find",
+    "wähle": "select",
+    "waehle": "select",
+    "wählen": "select",
+    "waehlen": "select",
+    "auswählen": "select",
+    "auswaehlen": "select",
     "erkläre": "explain",
     "erklären": "explain",
     "erklaere": "explain",
     "erklaeren": "explain",
     "debugge": "debug",
     "debuggen": "debug",
+    "öffne": "open",
+    "öffnet": "open",
+    "öffnen": "open",
+    "oeffne": "open",
+    "oeffnet": "open",
+    "oeffnen": "open",
+    "startet": "start",
+    "läuft": "run",
+    "laeuft": "run",
+    "ständig": "repeat",
+    "staendig": "repeat",
+    "wiederholt": "repeat",
+    "brauch": "need",
+    "brauche": "need",
+    "braucht": "need",
+    "benötige": "need",
+    "benötigt": "need",
+    "benoetige": "need",
+    "benoetigt": "need",
+    "entscheide": "evaluate",
+    "entscheiden": "evaluate",
     "konvertiere": "convert",
     "konvertieren": "convert",
     "umwandeln": "convert",
@@ -356,8 +498,17 @@ TOKEN_NORMALIZATION = {
     "löschen": "delete",
     "loeschen": "delete",
     "prüfung": "review",
-    "bewerte": "review",
-    "bewerten": "review",
+    "bewerte": "evaluate",
+    "bewerten": "evaluate",
+}
+TOKEN_EXPANSIONS = {
+    "evidenzsynthese": ("evidence", "synthesize"),
+    "promptbibliothek": ("prompt", "library"),
+    "promptbibliotheken": ("prompt", "library"),
+    "promptquelle": ("prompt", "source"),
+    "promptquellen": ("prompt", "source"),
+    "promptsammlung": ("prompt", "library"),
+    "promptsammlungen": ("prompt", "library"),
 }
 PLATFORM_TOKENS = {
     "python",
@@ -382,6 +533,29 @@ SECURITY_TOKENS = {
     "vulnerabilities",
 }
 REVIEW_TOKENS = {"audit", "review", "regression", "regressions"}
+PULL_REQUEST_REVIEW_SKILL_NAMES = {
+    "code-review",
+    "code-review-excellence",
+    "github-code-review",
+    "github-pr-workflow",
+}
+WEB_PERFORMANCE_SKILL_NAMES = {
+    "core-web-vitals",
+    "performance",
+    "web-perf",
+}
+EXACT_ARTIFACT_NAME_TOKENS = {
+    "audio",
+    "document",
+    "image",
+    "pdf",
+    "presentation",
+    "slides",
+    "spreadsheet",
+    "video",
+    "xlsx",
+}
+AUDIO_OUTPUT_TOKENS = {"audio", "elevenlabs", "mp3", "speech", "tts", "voice"}
 TOKEN_CONTEXT_TOKENS = {
     "context",
     "feedback",
@@ -426,7 +600,6 @@ CONTROL_TOKENS = {
     "controller",
     "coordinate",
     "coordination",
-    "dashboard",
     "delegate",
     "delegation",
     "dod",
@@ -458,6 +631,7 @@ WORKFLOW_TOKENS = {
     "build",
     "code",
     "compress",
+    "combine",
     "condense",
     "cleanup",
     "create",
@@ -467,6 +641,7 @@ WORKFLOW_TOKENS = {
     "deploy",
     "design",
     "edit",
+    "evaluate",
     "extract",
     "explain",
     "fail",
@@ -493,7 +668,9 @@ WORKFLOW_TOKENS = {
     "save",
     "scrape",
     "search",
+    "select",
     "shrink",
+    "synthesize",
     "summarize",
     "test",
     "trim",
@@ -520,6 +697,7 @@ WORKFLOW_TOKENS = {
     "measure",
     "calculate",
     "translate",
+    "invalidate",
     "record",
     "run",
     "check",
@@ -563,12 +741,14 @@ MATERIAL_TASK_TOKENS = {
     "benchmark",
     "build",
     "cleanup",
+    "combine",
     "create",
     "crawl",
     "debug",
     "deploy",
     "design",
     "edit",
+    "evaluate",
     "extract",
     "fix",
     "implement",
@@ -579,8 +759,11 @@ MATERIAL_TASK_TOKENS = {
     "refactor",
     "release",
     "research",
+    "select",
     "scrape",
     "test",
+    "synthesize",
+    "invalidate",
     "update",
     "write",
 }
@@ -605,10 +788,55 @@ NOISE_NAME_RE = re.compile(
 )
 FLAT_SKILL_SKIP = {"readme.md", "changelog.md", "license.md", "contributing.md"}
 DEFAULT_FAVORITE_BOOST = 6
-DEFAULT_MAX_SELECTED = 1
+DEFAULT_MAX_SELECTED = 5
 MAX_SELECTED = 10
+MAX_AUTOMATIC_SELECTED = 5
 MIN_STRICT_SCORE = 8
 MIN_STRICT_MARGIN = 3
+CONTROL_SKILL_NAMES = {
+    "agent-loop",
+    "blueprint",
+    "goalmaster",
+    "master-check",
+    "omnigoal",
+    "verification-loop",
+}
+SKILL_ROUTER_GOVERNANCE_NAMES = {
+    "agent-efficiency-orchestrator",
+    "agent-token-saver",
+    "skill-fleet-audit",
+    "skill-portfolio-governance",
+}
+SKILL_ROUTER_MANAGEMENT_TOKENS = {
+    "accuracy",
+    "audit",
+    "combine",
+    "evaluate",
+    "governance",
+    "optimize",
+    "quality",
+}
+BUNDLE_MODIFIER_TOKENS = {
+    "combine",
+    "complementary",
+    "current",
+    "final",
+    "five",
+    "multilingual",
+    "natural",
+    "need",
+    "request",
+    "together",
+}
+NATURAL_SKILL_CUE_RE = re.compile(
+    r"\b(?:apply|combine|load|use|using|with|via|kombiniere|kombinieren|lade|"
+    r"laden|mit|nutze|nutzen|verwende|verwenden)\b",
+    re.IGNORECASE,
+)
+CLAUSE_SPLIT_RE = re.compile(
+    r"(?:[.!?;\n]+|,\s*|\b(?:and then|then|and|plus|sowie|und dann|danach|und)\b)",
+    re.IGNORECASE,
+)
 
 # ---------------------------------------------------------------------------
 # Tunable scoring weights (autolearn layer, 2026-07-23).
@@ -762,6 +990,8 @@ class RouteResult:
     top_score: int = 0
     margin: int = 0
     recommended_tools: list[ToolRecommendation] = field(default_factory=list)
+    selection_roles: dict[str, str] = field(default_factory=dict)
+    alternatives: list[dict[str, object]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -968,14 +1198,44 @@ TOOL_SPECS = (
 )
 
 
+def contextual_intent_tokens(text: str) -> set[str]:
+    """Add small phrase-level signals that bag-of-words matching cannot express."""
+    lowered = (text or "").lower()
+    tokens: set[str] = set()
+    problem_question = re.search(r"\b(?:warum|weshalb|wieso|why)\b", lowered)
+    runtime_symptom = re.search(
+        r"\b(?:fail\w*|fehl\w*|hängt|haengt|keeps?|läuft|laeuft|open\w*|"
+        r"öffnet|oeffnet|start\w*|ständig|staendig|wiederholt)\b",
+        lowered,
+    )
+    if problem_question and runtime_symptom:
+        tokens.add("debug")
+    if re.search(
+        r"\b(?:brauch(?:e|t)?\s+ich|benötig\w*|benoetig\w*|do\s+i\s+need|"
+        r"is\s+(?:it|this|that)\s+needed)\b",
+        lowered,
+    ):
+        tokens.add("evaluate")
+    if (
+        re.search(r"\b(?:prüf\w*|pruef\w*|review\w*)\b", lowered)
+        and re.search(r"\b(?:pull\s+request|merge\s+request|pr)\b", lowered)
+    ):
+        tokens.add("review")
+    return tokens
+
+
 @lru_cache(maxsize=8192)
 def words(text: str) -> frozenset[str]:
-    tokens: set[str] = set()
+    tokens: set[str] = contextual_intent_tokens(text)
     for raw in WORD_RE.findall(text or ""):
         lowered = raw.lower()
         if lowered in STOPWORDS:
             continue
-        tokens.add(TOKEN_NORMALIZATION.get(lowered, lowered))
+        expansion = TOKEN_EXPANSIONS.get(lowered)
+        if expansion:
+            tokens.update(expansion)
+        else:
+            tokens.add(TOKEN_NORMALIZATION.get(lowered, lowered))
         if lowered == "pytest":
             tokens.add("python")
     return frozenset(tokens)
@@ -2869,13 +3129,109 @@ def _ordered_tokens(text: str) -> list[str]:
         lowered = raw.lower()
         if lowered in STOPWORDS:
             continue
-        out.append(TOKEN_NORMALIZATION.get(lowered, lowered))
+        expansion = TOKEN_EXPANSIONS.get(lowered)
+        if expansion:
+            out.extend(expansion)
+        else:
+            out.append(TOKEN_NORMALIZATION.get(lowered, lowered))
     return out
 
 
 def _intent_bigrams(text: str) -> list[str]:
     tokens = [t for t in _ordered_tokens(text) if len(t) > 2]
     return [f"{a} {b}" for a, b in zip(tokens, tokens[1:]) if a != b]
+
+
+def normalized_phrase_text(text: str) -> str:
+    normalized = re.sub(r"[-_]+", " ", (text or "").lower())
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def mentioned_skill_names(intent: str, skills: list[Skill]) -> list[str]:
+    """Resolve `$names` plus naturally named multi-word skills in user order."""
+    mentions: list[tuple[int, int, str, bool]] = [
+        (match.start(), match.end(), match.group(1).lower(), True)
+        for match in EXPLICIT_SKILL_RE.finditer(intent)
+    ]
+    normalized_intent = normalized_phrase_text(intent)
+    if NATURAL_SKILL_CUE_RE.search(intent):
+        for skill in skills:
+            phrase = normalized_phrase_text(skill.name)
+            if " " not in phrase:
+                continue
+            start = 0
+            while True:
+                index = normalized_intent.find(phrase, start)
+                if index < 0:
+                    break
+                end = index + len(phrase)
+                before_ok = index == 0 or not (
+                    normalized_intent[index - 1].isalnum()
+                    or normalized_intent[index - 1] in "_+-"
+                )
+                after_ok = end == len(normalized_intent) or not (
+                    normalized_intent[end].isalnum()
+                    or normalized_intent[end] in "_+-"
+                )
+                if before_ok and after_ok:
+                    mentions.append((index, end, skill.name.lower(), False))
+                start = index + 1
+    # Longest phrase wins when names overlap: "macos-computer-use" must not
+    # implicitly add the nested "computer-use" skill.
+    mentions.sort(key=lambda item: (item[0], -(item[1] - item[0]), not item[3]))
+    names: list[str] = []
+    accepted_spans: list[tuple[int, int]] = []
+    for start, end, name, _explicit in mentions:
+        if name in names:
+            continue
+        if any(
+            start < prior_end and end > prior_start
+            for prior_start, prior_end in accepted_spans
+        ):
+            continue
+        names.append(name)
+        accepted_spans.append((start, end))
+    return names
+
+
+def natural_names_are_complete_stack(intent: str, names: list[str]) -> bool:
+    """True when the request only asks to load/combine the named skills."""
+    named_tokens: set[str] = set()
+    for name in names:
+        named_tokens.update(words(name.replace("-", " ")))
+    residual_workflow = (words(intent) - named_tokens) & WORKFLOW_TOKENS
+    return not (residual_workflow - {"combine", "load"})
+
+
+def without_natural_skill_mentions(intent: str, names: list[str]) -> str:
+    """Remove named-skill phrases so the underlying task can choose a primary."""
+    masked = intent
+    for name in sorted(names, key=len, reverse=True):
+        parts = [part for part in re.split(r"[-_\s]+", name) if part]
+        if not parts:
+            continue
+        pattern = r"(?<![\w+])" + r"[-_\s]+".join(
+            re.escape(part) for part in parts
+        ) + r"(?![\w+])"
+        masked = re.sub(pattern, " ", masked, flags=re.IGNORECASE)
+    return NATURAL_SKILL_CUE_RE.sub(" ", masked)
+
+
+def actionable_clauses(intent: str) -> list[str]:
+    clauses = []
+    for raw in CLAUSE_SPLIT_RE.split(intent):
+        clause = raw.strip(" \t\r\n-–—:()[]")
+        if clause and words(clause) & WORKFLOW_TOKENS:
+            clauses.append(clause)
+    return clauses
+
+
+def skill_words(skill: Skill) -> frozenset[str]:
+    return (
+        words(skill.name.replace("-", " "))
+        | words(skill.description)
+        | words(skill.keywords)
+    )
 
 
 def score(
@@ -2944,6 +3300,54 @@ def score(
         s += 20
     if iw & REVIEW_TOKENS and skill_words & (SECURITY_TOKENS | REVIEW_TOKENS):
         s += 12
+    if {"security", "review"} <= iw and {"security", "review"} <= nw:
+        s += 12
+    # Exact output-format names carry more intent than the generic words
+    # "create" or "report", even when hundreds of skills mention PDFs.
+    if len(nw) == 1 and nw <= iw and nw & EXACT_ARTIFACT_NAME_TOKENS:
+        s += 16
+    # German compounds expand into the same domain pair as the canonical
+    # skill name. Reward that pair over broad descriptions that merely mention
+    # prompts or evidence somewhere in a universal workflow.
+    if "prompt" in iw and iw & {"library", "source"}:
+        if {"prompt", "library"} <= nw:
+            s += 16
+    if "synthesize" in iw and iw & {"claim", "document", "evidence"}:
+        if {"evidence", "synthesize"} <= nw:
+            s += 16
+    # An audio-only briefing workflow needs positive modality evidence. The
+    # noun "briefing" alone usually denotes a written research artifact and
+    # must not pull a TTS player into an otherwise text-only bundle.
+    audio_only_skill = {"audio", "tts"} <= skill_words
+    if audio_only_skill and not (iw & AUDIO_OUTPUT_TOKENS):
+        s -= 20
+    # A German verb such as "prüfe" used with "pull request" means review,
+    # not merely execute tests. Prefer the dedicated PR-review workflows over
+    # skills that happen to mention PR checks or GitHub comments.
+    pull_request_review = (
+        "review" in iw
+        and bool(re.search(r"\b(?:pull\s+request|merge\s+request|pr)\b", lowered))
+    )
+    if (
+        pull_request_review
+        and canonical_skill_name(skill.name) in PULL_REQUEST_REVIEW_SKILL_NAMES
+    ):
+        s += 20
+        if "github" in iw and "github" in nw:
+            s += 8
+    # "Ladezeit" normalizes to performance. Landing-page wording otherwise
+    # overweights ad/copy skills, so preserve the technical web-performance
+    # domain when speed is the requested outcome.
+    web_performance_intent = (
+        "performance" in iw
+        and bool(iw & {"landing", "lcp", "page", "speed", "vitals"})
+    )
+    if web_performance_intent:
+        canonical_name = canonical_skill_name(skill.name)
+        if canonical_name in WEB_PERFORMANCE_SKILL_NAMES:
+            s += 20
+        elif nw & {"ad", "ads", "creative"}:
+            s -= 8
     # When a request clearly clusters around token/context infrastructure,
     # reject accidental matches such as ML skills that only mention "memory"
     # or "accuracy". Require the candidate itself to cover the domain broadly.
@@ -2953,6 +3357,19 @@ def score(
             s += 12
         elif domain_coverage == 0:
             s -= 12
+    # Requests about improving the skill router itself are governance work.
+    # A fetch/router implementation may share the words "skill" and "route",
+    # but it is not a portfolio-quality or routing-policy workflow.
+    skill_router_management = (
+        {"skill", "route"} <= iw
+        and bool(iw & SKILL_ROUTER_MANAGEMENT_TOKENS)
+    )
+    if skill_router_management:
+        canonical_name = canonical_skill_name(skill.name)
+        if canonical_name in SKILL_ROUTER_GOVERNANCE_NAMES:
+            s += 12
+        elif not (skill_words & SKILL_ROUTER_MANAGEMENT_TOKENS):
+            s -= 10
     # "agent team" is a workflow concept, not a request for Microsoft Teams.
     # Prefer skills that describe controller/worker contracts and penalize
     # meeting/calendar integrations that only match the generic word "team".
@@ -2981,7 +3398,14 @@ def score(
         s += 18 * len(name_control)
     skill_platforms = (nw | dw | kw) & PLATFORM_TOKENS
     requested_platforms = iw & PLATFORM_TOKENS
-    if (
+    if is_software_dev and debug_failure_intent and skill_platforms:
+        if not requested_platforms:
+            # A generic diagnosis must prefer the generic root-cause workflow.
+            # Platform debuggers require positive Node/Python/etc. evidence.
+            s -= 20
+        elif not (skill_platforms & requested_platforms):
+            s -= 20
+    elif (
         skill_platforms
         and requested_platforms
         and not (skill_platforms & requested_platforms)
@@ -3029,7 +3453,11 @@ def rank_candidates(
         )
     )
     intent_words = words(intent)
-    if intent_words & SECURITY_TOKENS and intent_words & REVIEW_TOKENS:
+    if (
+        intent_words & SECURITY_TOKENS
+        and intent_words & REVIEW_TOKENS
+        and len(actionable_clauses(intent)) <= 1
+    ):
         review_ranked = []
         for item in ranked:
             skill = item[3]
@@ -3045,6 +3473,153 @@ def rank_candidates(
     return ranked
 
 
+def is_control_skill_tie(items: list[tuple[int, int, int, Skill]]) -> bool:
+    return len(items) >= 2 and all(
+        canonical_skill_name(item[3].name) in CONTROL_SKILL_NAMES for item in items[:2]
+    )
+
+
+def is_safe_domain_tie(items: list[tuple[int, int, int, Skill]]) -> bool:
+    if is_control_skill_tie(items):
+        return True
+    return len(items) >= 2 and all(
+        canonical_skill_name(item[3].name) in SKILL_ROUTER_GOVERNANCE_NAMES
+        for item in items[:2]
+    )
+
+
+def selection_roles(selected: list[Skill]) -> dict[str, str]:
+    return {
+        skill.name: "primary" if index == 0 else "support"
+        for index, skill in enumerate(selected)
+    }
+
+
+def alternative_summaries(
+    ranked: list[tuple[int, int, int, Skill]], limit: int = 3
+) -> list[dict[str, object]]:
+    rows = []
+    for total, base, adaptive, skill in ranked:
+        if total <= 0:
+            continue
+        rows.append(
+            {
+                "name": skill.name,
+                "score": total,
+                "base_score": base,
+                "adaptive_adjustment": adaptive,
+                "path": skill.path,
+            }
+        )
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def complementary_bundle(
+    intent: str,
+    ranked: list[tuple[int, int, int, Skill]],
+    skills: list[Skill],
+    limit: int,
+    favorites: dict[str, int] | None = None,
+    usage_data: UsageData | None = None,
+) -> list[tuple[int, int, int, Skill]]:
+    """Select one primary plus skills that cover still-uncovered intent evidence."""
+    positive = [item for item in ranked if item[0] > 0]
+    if not positive:
+        return []
+    limit = max(1, min(limit, MAX_AUTOMATIC_SELECTED))
+    intent_words = words(intent)
+    frequencies = doc_frequencies(skills)
+    clauses = actionable_clauses(intent)
+    global_by_name = {item[3].name: item for item in positive}
+    clause_winners: list[tuple[int, int, int, Skill]] = []
+
+    # A broad multi-phase prompt can make one domain boost dwarf another
+    # legitimate phase. For a real multi-clause request, build the bundle in
+    # task order so a generic full-prompt match cannot displace phase one.
+    if len(clauses) >= 2:
+        for clause in clauses:
+            clause_positive = [
+                item
+                for item in rank_candidates(clause, skills, favorites, usage_data)
+                if item[0] > 0
+            ]
+            if not clause_positive or clause_positive[0][1] < MIN_STRICT_SCORE:
+                continue
+            clause_margin = clause_positive[0][0] - (
+                clause_positive[1][0] if len(clause_positive) > 1 else 0
+            )
+            if (
+                len(clause_positive) > 1
+                and clause_margin < MIN_STRICT_MARGIN
+                and not is_safe_domain_tie(clause_positive)
+            ):
+                continue
+            clause_item = clause_positive[0]
+            clause_winners.append(
+                global_by_name.get(clause_item[3].name, clause_item)
+            )
+
+    # Two-clause requests often have a precise holistic winner (for example
+    # scrape + extract -> Superweb). With three or more phases, clause order is
+    # the safer primary signal than a description that mentions everything.
+    ordered_clause_primary = len(clauses) >= 3 and bool(clause_winners)
+    primary = clause_winners[0] if ordered_clause_primary else positive[0]
+    selected = [primary]
+    if limit == 1:
+        return selected
+    covered = intent_words & skill_words(primary[3])
+    selected_names = {primary[3].name}
+
+    remaining_clause_winners = (
+        clause_winners[1:] if ordered_clause_primary else clause_winners
+    )
+    for item in remaining_clause_winners:
+        skill = item[3]
+        if skill.name in selected_names:
+            continue
+        selected.append(item)
+        selected_names.add(skill.name)
+        covered |= intent_words & skill_words(skill)
+        if len(selected) >= limit:
+            return selected
+
+    floor = max(MIN_STRICT_SCORE, round(positive[0][0] * 0.35))
+    for item in positive[1:]:
+        total, base, _adaptive, skill = item
+        if skill.name in selected_names:
+            continue
+        if total < floor or base < MIN_STRICT_SCORE:
+            continue
+        matched = intent_words & skill_words(skill)
+        new_matches = matched - covered
+        has_workflow_evidence = bool(matched & WORKFLOW_TOKENS)
+        has_security_review_evidence = bool(
+            matched & SECURITY_TOKENS
+            and intent_words & REVIEW_TOKENS
+            and skill_words(skill) & REVIEW_TOKENS
+        )
+        if not (has_workflow_evidence or has_security_review_evidence):
+            continue
+        informative = {
+            token
+            for token in new_matches
+            if rarity(token, frequencies) >= 0.5
+            and token not in BUNDLE_MODIFIER_TOKENS
+        }
+        # A generic modifier (for example "natural") is insufficient evidence
+        # for another skill. A concrete new facet such as "auth" remains valid.
+        if not informative:
+            continue
+        selected.append(item)
+        selected_names.add(skill.name)
+        covered |= matched
+        if len(selected) >= limit:
+            break
+    return selected
+
+
 def route(
     intent: str,
     max_selected: int = DEFAULT_MAX_SELECTED,
@@ -3055,6 +3630,7 @@ def route(
     usage_data: UsageData | None = None,
 ) -> RouteResult:
     max_selected = selection_limit(max_selected)
+    automatic_limit = min(max_selected, MAX_AUTOMATIC_SELECTED)
     catalog_data = catalog_data or load_catalog(roots, refresh=refresh_index)
     skills = catalog_data.skills
     root_paths = catalog_data.roots
@@ -3063,21 +3639,58 @@ def route(
         usage_data = load_usage_data()
     recommended_tools = recommend_tools(intent, usage_data)
     by_name = {skill.name.lower(): skill for skill in skills}
-    explicit_names = [name.lower() for name in EXPLICIT_SKILL_RE.findall(intent)]
     bare_name = intent.strip().lower()
-    if not explicit_names and (
-        bare_name in by_name or canonical_skill_name(bare_name) in by_name
-    ):
+    dollar_names = [
+        match.group(1).lower() for match in EXPLICIT_SKILL_RE.finditer(intent)
+    ]
+    if bare_name in by_name or canonical_skill_name(bare_name) in by_name:
         explicit_names = [bare_name]
+    else:
+        explicit_names = mentioned_skill_names(intent, skills)
     if explicit_names:
-        selected = []
+        named_selected = []
         for name in explicit_names:
             skill = by_name.get(canonical_skill_name(name)) or by_name.get(name)
-            if skill is not None and skill not in selected:
-                selected.append(skill)
-        selected = selected[:max_selected]
+            if skill is not None and skill not in named_selected:
+                named_selected.append(skill)
+        selected = named_selected[:max_selected]
+        decision = "explicit"
+        top_score = margin = 0
+        alternatives: list[dict[str, object]] = []
+        hybrid_natural_request = (
+            not dollar_names
+            and bare_name not in by_name
+            and canonical_skill_name(bare_name) not in by_name
+            and len(named_selected) < automatic_limit
+            and not natural_names_are_complete_stack(intent, explicit_names)
+        )
+        if hybrid_natural_request:
+            inferred = route(
+                without_natural_skill_mentions(intent, explicit_names),
+                max_selected=1,
+                strict=strict,
+                catalog_data=catalog_data,
+                usage_data=usage_data,
+            )
+            selected = []
+            for skill in [*inferred.selected, *named_selected]:
+                if skill not in selected:
+                    selected.append(skill)
+            selected = selected[:automatic_limit]
+            decision = "mixed-explicit" if inferred.selected else "explicit"
+            top_score = inferred.top_score
+            margin = inferred.margin
+            alternatives = inferred.alternatives
+        roles = selection_roles(selected)
         block = render_router_block(
-            intent, selected, len(skills), root_paths, favorites, recommended_tools
+            intent,
+            selected,
+            len(skills),
+            root_paths,
+            favorites,
+            recommended_tools,
+            roles=roles,
+            alternatives=alternatives,
         )
         return RouteResult(
             intent=intent,
@@ -3086,8 +3699,12 @@ def route(
             roots=[str(p) for p in root_paths],
             router_block=block,
             catalog_source=catalog_data.source,
-            decision="explicit",
+            decision=decision,
+            top_score=top_score,
+            margin=margin,
             recommended_tools=recommended_tools,
+            selection_roles=roles,
+            alternatives=alternatives,
         )
     if explicit_tool_names(intent):
         block = render_router_block(
@@ -3138,10 +3755,8 @@ def route(
             and fb_top >= tw["no_workflow_min_score"]
             and fb_margin >= tw["no_workflow_min_margin"]
         ):
-            fb_floor = max(4, round(fb_top * 0.33))
-            selected = [
-                skill for points, _b, _a, skill in fb_positive if points >= fb_floor
-            ][:max_selected]
+            selected = [fb_positive[0][3]][:automatic_limit]
+            roles = selection_roles(selected)
             block = render_router_block(
                 intent,
                 selected,
@@ -3149,6 +3764,7 @@ def route(
                 root_paths,
                 favorites,
                 recommended_tools,
+                roles=roles,
             )
             return RouteResult(
                 intent=intent,
@@ -3161,9 +3777,17 @@ def route(
                 top_score=fb_top,
                 margin=fb_margin,
                 recommended_tools=recommended_tools,
+                selection_roles=roles,
             )
+        alternatives = alternative_summaries(fb_ranked)
         block = render_router_block(
-            intent, [], len(skills), root_paths, favorites, recommended_tools
+            intent,
+            [],
+            len(skills),
+            root_paths,
+            favorites,
+            recommended_tools,
+            alternatives=alternatives,
         )
         return RouteResult(
             intent=intent,
@@ -3174,6 +3798,7 @@ def route(
             catalog_source=catalog_data.source,
             decision="no-workflow",
             recommended_tools=recommended_tools,
+            alternatives=alternatives,
         )
     if "test" in intent_words and intent_words <= PLAIN_TEST_TOKENS:
         block = render_router_block(
@@ -3193,49 +3818,38 @@ def route(
     positive = [item for item in ranked if item[0] > 0]
     top_score = positive[0][0] if positive else 0
     margin = top_score - positive[1][0] if len(positive) > 1 else top_score
+    bundle = complementary_bundle(
+        intent, ranked, skills, automatic_limit, favorites, usage_data
+    )
     decision = "selected" if positive else "no-match"
     if strict:
-        if not positive or top_score < MIN_STRICT_SCORE:
+        top_base = positive[0][1] if positive else 0
+        if not positive or top_base < MIN_STRICT_SCORE:
             positive = []
+            bundle = []
             decision = "low-confidence" if top_score else "no-match"
         elif len(positive) > 1 and margin < MIN_STRICT_MARGIN:
-            # Control-skill exception (2026-07-24): when the top-2 candidates are
-            # both control/orchestration skills (agent-loop, omnigoal,
-            # verification-loop, master-check, goalmaster), a narrow margin is
-            # expected — they share vocabulary. Pick the top one rather than
-            # bailing to "ambiguous", so --max 1 --strict returns a control skill.
-            top2 = [positive[0][3], positive[1][3]]
-            top2_control = all(
-                (
-                    words(s.name.replace("-", " "))
-                    | words(s.description)
-                    | words(s.keywords)
-                )
-                & CONTROL_TOKENS
-                and len(
-                    (
-                        words(s.name.replace("-", " "))
-                        | words(s.description)
-                        | words(s.keywords)
-                    )
-                    & CONTROL_TOKENS
-                )
-                >= 2
-                for s in top2
+            confident_multiphase_bundle = (
+                len(bundle) >= 2 and len(actionable_clauses(intent)) >= 2
             )
-            if top2_control:
+            if is_safe_domain_tie(positive) or confident_multiphase_bundle:
                 decision = "selected"
             else:
                 positive = []
+                bundle = []
                 decision = "ambiguous"
-    confidence_floor = max(4, round(positive[0][0] * 0.33)) if positive else 0
-    selected = [
-        skill
-        for points, _base, _adaptive, skill in positive
-        if points >= confidence_floor
-    ][:max_selected]
+    selected = [item[3] for item in bundle] if positive else []
+    roles = selection_roles(selected)
+    alternatives = alternative_summaries(ranked) if not selected else []
     block = render_router_block(
-        intent, selected, len(skills), root_paths, favorites, recommended_tools
+        intent,
+        selected,
+        len(skills),
+        root_paths,
+        favorites,
+        recommended_tools,
+        roles=roles,
+        alternatives=alternatives,
     )
     return RouteResult(
         intent=intent,
@@ -3248,6 +3862,8 @@ def route(
         top_score=top_score,
         margin=margin,
         recommended_tools=recommended_tools,
+        selection_roles=roles,
+        alternatives=alternatives,
     )
 
 
@@ -3258,15 +3874,27 @@ def render_router_block(
     roots: list[Path],
     favorites: dict[str, int] | None = None,
     recommended_tools: list[ToolRecommendation] | None = None,
+    roles: dict[str, str] | None = None,
+    alternatives: list[dict[str, object]] | None = None,
 ) -> str:
     lines = [f"router: {SKILL_NAME}", f"intent: {intent}", f"scanned: {scanned}"]
     if selected:
         lines.append("load:")
         for s in selected:
             star = " ★" if favorites and s.name.lower() in favorites else ""
-            lines.append(f"- {s.name}{star}: {s.description[:160]} ({s.path})")
+            role = f" [{roles[s.name]}]" if roles and s.name in roles else ""
+            lines.append(
+                f"- {s.name}{star}{role}: {s.description[:160]} ({s.path})"
+            )
     else:
         lines.append("load: []")
+    if alternatives:
+        lines.append("consider:")
+        for candidate in alternatives:
+            lines.append(
+                f"- {candidate['name']}: score={candidate['score']} "
+                f"base={candidate['base_score']} ({candidate['path']})"
+            )
     if recommended_tools:
         lines.append("tools:")
         for tool in recommended_tools:

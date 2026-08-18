@@ -97,6 +97,10 @@ class AgentTokenSaverTests(unittest.TestCase):
             )
 
             self.assertEqual(result.selected, [])
+            self.assertEqual(
+                [candidate["name"] for candidate in result.alternatives],
+                ["release-a", "release-b"],
+            )
 
     def test_multi_token_match_beats_single_rare_name_token(self):
         with tempfile.TemporaryDirectory() as td:
@@ -150,6 +154,262 @@ class AgentTokenSaverTests(unittest.TestCase):
             result = mod.route("$pdf", roots=[root])
 
             self.assertEqual([s.name for s in result.selected], ["pdf"])
+
+    def test_natural_named_stack_selects_five_skills_in_mention_order(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            names = [
+                "clear-thought",
+                "systematic-debugging",
+                "agent-efficiency-orchestrator",
+                "verification-loop",
+                "security-review",
+            ]
+            for name in names:
+                write_skill(root, name, f"Use {name} for its dedicated workflow.")
+
+            result = mod.route(
+                "Nutze Clear Thought, Systematic Debugging, "
+                "Agent Efficiency Orchestrator, Verification Loop und "
+                "Security Review gemeinsam.",
+                roots=[root],
+                usage_data=mod.UsageData(signals={}),
+            )
+
+            self.assertEqual([skill.name for skill in result.selected], names)
+            self.assertEqual(result.decision, "explicit")
+            self.assertEqual(result.selection_roles[names[0]], "primary")
+            self.assertTrue(
+                all(result.selection_roles[name] == "support" for name in names[1:])
+            )
+
+    def test_exact_and_natural_names_do_not_add_overlapping_subskill(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(root, "computer-use", "Operate a computer interface.")
+            write_skill(root, "macos-computer-use", "Operate the macOS interface.")
+
+            exact = mod.route("macos-computer-use", roots=[root], strict=True)
+            natural = mod.route(
+                "Nutze macos-computer-use für diese Aufgabe.",
+                roots=[root],
+                strict=True,
+            )
+
+            self.assertEqual(
+                [skill.name for skill in exact.selected], ["macos-computer-use"]
+            )
+            self.assertEqual(
+                [skill.name for skill in natural.selected], ["macos-computer-use"]
+            )
+
+    def test_natural_named_support_does_not_displace_underlying_primary(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(
+                root,
+                "clear-thought",
+                "Apply structured reasoning and mental models.",
+                "structured, reasoning, thinking",
+            )
+            write_skill(
+                root,
+                "skill-fleet-audit",
+                "Audit and optimize skill router quality and routing accuracy.",
+                "audit, optimize, skill, router, route, quality, accuracy",
+            )
+            write_skill(
+                root,
+                "fetch-router",
+                "Route HTTP fetch requests.",
+                "fetch, request, route",
+            )
+
+            result = mod.route(
+                "Warum fand der Skill Router nichts? Verwende vielleicht Clear "
+                "Thought und verbessere die Treffergenauigkeit des Skill Routers.",
+                roots=[root],
+                strict=True,
+                usage_data=mod.UsageData(signals={}),
+            )
+
+            self.assertEqual(
+                [skill.name for skill in result.selected],
+                ["skill-fleet-audit", "clear-thought"],
+            )
+            self.assertEqual(result.decision, "mixed-explicit")
+            self.assertEqual(result.selection_roles["skill-fleet-audit"], "primary")
+            self.assertEqual(result.selection_roles["clear-thought"], "support")
+
+    def test_multiclause_route_combines_five_complementary_skills(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(
+                root,
+                "source-research",
+                "Research current sources and collect evidence.",
+                "research, current, sources, evidence",
+            )
+            write_skill(
+                root,
+                "pdf-report",
+                "Create a polished PDF report document.",
+                "create, pdf, report, document",
+            )
+            write_skill(
+                root,
+                "email-delivery",
+                "Send an email message to a recipient.",
+                "send, email, message, recipient",
+            )
+            write_skill(
+                root,
+                "security-review",
+                "Review security risks and vulnerabilities.",
+                "review, security, risk, vulnerabilities",
+            )
+            write_skill(
+                root,
+                "verification-loop",
+                "Verify the final output and tests.",
+                "verify, output, test, final",
+            )
+
+            result = mod.route(
+                "Research current sources; create a PDF report; send it by email; "
+                "review security risks; verify the final output.",
+                roots=[root],
+                strict=True,
+                usage_data=mod.UsageData(signals={}),
+            )
+
+            self.assertEqual(len(result.selected), 5)
+            self.assertEqual(
+                [skill.name for skill in result.selected],
+                [
+                    "source-research",
+                    "pdf-report",
+                    "email-delivery",
+                    "security-review",
+                    "verification-loop",
+                ],
+            )
+            self.assertEqual(
+                list(result.selection_roles.values()).count("primary"), 1
+            )
+            self.assertEqual(
+                list(result.selection_roles.values()).count("support"), 4
+            )
+
+    def test_german_prompt_discovery_and_evaluation_combine(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(
+                root,
+                "prompt-library-navigator",
+                "Browse and search prompt libraries for source selection.",
+                "prompt, library, browse, search, select, source",
+            )
+            write_skill(
+                root,
+                "prompt-evaluation",
+                "Test prompts reproducibly against fixed test cases and metrics.",
+                "prompt, test, reproducible, fixed, cases, metrics",
+            )
+            write_skill(
+                root,
+                "python-testing",
+                "Test Python code with unit and integration tests.",
+                "python, code, test",
+            )
+
+            result = mod.route(
+                "Durchsuche unsere Prompt-Bibliotheken; wähle einen Prompt; "
+                "teste ihn reproduzierbar gegen feste Testfälle.",
+                roots=[root],
+                strict=True,
+                usage_data=mod.UsageData(signals={}),
+            )
+
+            self.assertEqual(
+                [skill.name for skill in result.selected],
+                ["prompt-library-navigator", "prompt-evaluation"],
+            )
+
+    def test_german_prompt_discovery_and_evidence_synthesis_combine(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(
+                root,
+                "prompt-library-navigator",
+                "Find and search prompt libraries and prompt sources.",
+                "find, search, prompt, library, source",
+            )
+            write_skill(
+                root,
+                "evidence-synthesis-patterns",
+                "Synthesize multiple documents into claims and traceable evidence.",
+                "synthesis, documents, claims, evidence",
+            )
+
+            result = mod.route(
+                "Finde eine Promptquelle; synthetisiere mehrere Dokumente mit "
+                "Claims und Belegen.",
+                roots=[root],
+                strict=True,
+                usage_data=mod.UsageData(signals={}),
+            )
+
+            self.assertEqual(len(result.selected), 2)
+            self.assertEqual(
+                {skill.name for skill in result.selected},
+                {"prompt-library-navigator", "evidence-synthesis-patterns"},
+            )
+
+    def test_text_research_bundle_excludes_audio_only_briefing_skill(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(
+                root,
+                "prompt-library-navigator",
+                "Find and search finance prompt libraries.",
+                "find, search, finance, prompt, library",
+            )
+            write_skill(
+                root,
+                "finance-thesis-invalidation",
+                "Invalidate an investment thesis with counterevidence.",
+                "invalidate, investment, thesis, counterevidence",
+            )
+            write_skill(
+                root,
+                "equity-research-artifact",
+                "Create an auditable equity research brief.",
+                "create, equity, research, brief",
+            )
+            write_skill(
+                root,
+                "daily-briefing",
+                "Generate and play an audio briefing with TTS as an MP3.",
+                "generate, play, audio, briefing, tts, mp3",
+            )
+
+            result = mod.route(
+                "Finde Finance-Prompt-Bibliotheken; widerlege die Investment-These; "
+                "erstelle ein Equity-Research-Briefing.",
+                roots=[root],
+                strict=True,
+                usage_data=mod.UsageData(signals={}),
+            )
+
+            self.assertEqual(
+                [skill.name for skill in result.selected],
+                [
+                    "prompt-library-navigator",
+                    "finance-thesis-invalidation",
+                    "equity-research-artifact",
+                ],
+            )
 
     def test_stack_allows_ten_explicit_skills_but_caps_higher_requests(self):
         with tempfile.TemporaryDirectory() as td:
@@ -280,9 +540,9 @@ class AgentTokenSaverTests(unittest.TestCase):
                 roots=[root],
             )
 
-            self.assertCountEqual(
-                [s.name for s in result.selected],
-                ["python-debugpy", "systematic-debugging", "test-driven-development"],
+            self.assertEqual(result.selected[0].name, "python-debugpy")
+            self.assertNotIn(
+                "node-inspect-debugger", [skill.name for skill in result.selected]
             )
 
     def test_security_review_beats_generic_web_api_match(self):
@@ -321,6 +581,62 @@ class AgentTokenSaverTests(unittest.TestCase):
                 names[:2], ["security-hardening", "requesting-code-review"]
             )
             self.assertNotIn("web-fetcher", names)
+
+    def test_german_pull_request_review_beats_pr_check_distractors(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(
+                root,
+                "antislop",
+                "Check text and code before a GitHub pull request.",
+                "github, pull request, test",
+            )
+            write_skill(
+                root,
+                "gh-address-comments",
+                "Address comments on an open GitHub pull request.",
+                "github, pull request, comments",
+            )
+            write_skill(
+                root,
+                "github-code-review",
+                "Review a GitHub pull request for code quality and defects.",
+                "github, pull request, code review",
+            )
+
+            result = mod.route(
+                "prüfe den pull request auf github",
+                max_selected=1,
+                roots=[root],
+                strict=True,
+            )
+
+            self.assertEqual([skill.name for skill in result.selected], ["github-code-review"])
+
+    def test_german_landing_page_load_time_routes_web_performance(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(
+                root,
+                "ad-creative",
+                "Optimize landing page advertising creative performance.",
+                "landing, page, ads, performance",
+            )
+            write_skill(
+                root,
+                "performance",
+                "Improve page speed, load time, and web performance.",
+                "page, speed, performance",
+            )
+
+            result = mod.route(
+                "optimiere die ladezeit meiner landing page",
+                max_selected=1,
+                roots=[root],
+                strict=True,
+            )
+
+            self.assertEqual([skill.name for skill in result.selected], ["performance"])
 
     def test_common_roots_include_codex_plugin_cache(self):
         with tempfile.TemporaryDirectory() as td:
@@ -677,6 +993,76 @@ class AgentTokenSaverTests(unittest.TestCase):
 
             self.assertEqual(result.decision, "selected")
             self.assertEqual(result.selected[0].name, "agent-token-saver")
+
+    def test_german_repeated_local_dashboard_routes_generic_root_cause_skill(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            software = root / "software-development"
+            write_skill(
+                software,
+                "systematic-debugging",
+                "Find root causes with systematic debugging and troubleshooting.",
+                "debugging, troubleshooting, root cause, investigation",
+            )
+            write_skill(
+                software,
+                "node-inspect-debugger",
+                "Debug Node.js with inspect and Chrome DevTools Protocol.",
+                "debugging, nodejs, inspect, cdp",
+            )
+            write_skill(
+                software,
+                "python-debugpy",
+                "Debug Python with pdb and debugpy.",
+                "debugging, python, pdb, debugpy",
+            )
+            write_skill(
+                root,
+                "analytics-dashboard",
+                "Create an analytics dashboard with charts and revenue KPIs.",
+                "dashboard, analytics, charts, revenue",
+            )
+
+            result = mod.route(
+                "Wofür war noch mal Serena und warum öffnet es sich die ganze "
+                "Zeit? Brauch ich das wirklich?",
+                roots=[root],
+                strict=True,
+                usage_data=mod.UsageData(signals={}),
+            )
+
+            self.assertEqual(result.decision, "selected")
+            self.assertEqual(
+                [skill.name for skill in result.selected], ["systematic-debugging"]
+            )
+
+    def test_natural_german_router_optimization_reaches_skill_governance(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(
+                root,
+                "skill-fleet-audit",
+                "Audit and improve a multilingual skill router fleet, routing "
+                "accuracy, reachability, and safe skill combinations.",
+                "skills, router, routing, multilingual, accuracy, combinations",
+            )
+            write_skill(
+                root,
+                "fetch-router",
+                "Route HTTP fetch requests between web transports.",
+                "fetch, http, web, routing",
+            )
+
+            result = mod.route(
+                "Maximiere natürliches mehrsprachiges Skill-Routing und kombiniere "
+                "bei Bedarf bis zu fünf ergänzende Skills.",
+                roots=[root],
+                strict=True,
+                usage_data=mod.UsageData(signals={}),
+            )
+
+            self.assertEqual(result.decision, "selected")
+            self.assertEqual(result.selected[0].name, "skill-fleet-audit")
 
     def test_adaptive_feedback_breaks_relevant_tie_without_creating_relevance(self):
         with tempfile.TemporaryDirectory() as td:

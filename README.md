@@ -1,14 +1,17 @@
 # Save Your Skill Tokens
 
-**Your agent reads one skill file, not forty.**
+**Your agent reads the few skills the task needs, not forty.**
 
 Skill systems paste every `SKILL.md` into the prompt before the agent has any idea
 which one it needs. You pay for all of them, on every turn.
 
-This router picks the one skill that fits the task, or none at all, and passes on
-just that one. The rest stay on disk and are found only when asked for. Where the
-tool you use supports hooks, the picking happens before the model is called, so it
-costs you nothing at all.
+This router returns none for trivial or ambiguous work, one primary skill for a
+single workflow, or up to four complementary support skills for distinct task
+phases. The rest stay on disk. Natural requests such as “use Clear Thought and
+Systematic Debugging” resolve exact skill names without `$` syntax. In a mixed
+request, the task's inferred primary stays first and naturally named skills are
+added as supports. Where the host supports hooks, selection happens before the
+model is called.
 
 Works with Hermes, Claude Code, Codex CLI, GG Coder, OpenCode, Cursor and Windsurf.
 A job with several phases can ask for more, but still reads one phase at a time.
@@ -20,7 +23,7 @@ agent hooks, profiles and end-to-end benchmarks? Use the companion full-stack
 repository: https://github.com/Supersynergy/agent-token-saver
 
 This repository is the optional skill/tool router CLI. It owns local skill
-indexing, 0/1 skill routing, compact tool ranking, and its own optional
+indexing, complementary 0–5 skill routing, compact tool ranking, and its own optional
 privacy-safe usage observer. The companion repository owns the broader hook,
 ledger, compression, and measured context-saving stack. Neither installer
 silently installs the other package.
@@ -117,8 +120,10 @@ third-party numbers are the proof asset this project wants most.
 1. Reuses a five-minute canonical metadata index when fresh.
 2. Streams only bounded `SKILL.md` frontmatter when rebuilding it.
 3. Scores skills against the current intent.
-4. Returns zero on trivial/ambiguous work, otherwise one winner by default.
-5. Lets the agent read only that winning `SKILL.md`.
+4. Returns zero on trivial/ambiguous work, one primary for a single phase, or a
+   confidence-gated bundle for distinct phases.
+5. Labels every selected path as `primary` or `support` and caps automatic
+   bundles at five.
 6. Benchmarks full-catalog vs routed context.
 7. Logs privacy-safe route decisions and learns only from bounded usage/outcome signals.
 8. Ranks installed high-leverage CLIs separately from skills and observes real
@@ -128,10 +133,10 @@ Default policy:
 
 - hook-capable hosts keep the router **outside model context**
 - hosts without hooks keep exactly **one** tiny router hot
-- load **0–1** skills automatically
+- load **0–5** skills automatically: one primary plus only complementary support
 - ambiguous routes return **zero**
 - keep legacy in-context skill managers explicit-only to avoid router recursion
-- allow a **10-path ceiling** only for broad controller stacks
+- allow a **10-path ceiling** only for explicitly named controller stacks
 - give each subagent/process only its own **one primary skill** by default
 - use tools for cheap facts
 - use skills only when procedure changes execution
@@ -197,6 +202,8 @@ si hook-status
 si doctor --json
 si bench "debug failing pytest in Hermes prompt builder"
 si route '$security-hardening $release-excellence' --max 2
+si route 'Use Clear Thought, Systematic Debugging, Verification Loop, Security Review, and Agent Efficiency Orchestrator' --strict --json
+si route 'Research current sources; create a PDF; send it by email; review security; verify the result' --max 5 --strict --json
 ```
 
 `si` and `agent-skill-route` are the same stdlib CLI. The installer creates
@@ -298,7 +305,9 @@ load:
 - python-debugpy: Debug Python programs and failing test runs. (.../SKILL.md)
 ```
 
-No hidden magic. Automatic routing returns at most one primary skill.
+No hidden magic. Automatic routing returns one primary and, only when separate
+clauses add confident new work, up to four `support` skills. Weak alternatives
+are shown under `consider` instead of being loaded.
 
 ### 8. Built-in proof
 
@@ -390,7 +399,8 @@ Put the skill where your agent expects skills, then use this policy:
 ```text
 Run the router outside model context when hooks are available.
 Use the canonical metadata index.
-Load zero or one primary skill automatically.
+Load zero or one primary skill for a single-phase task. For a genuine
+multi-phase task, allow up to four confidence-gated complementary support skills.
 Use tools for cheap facts.
 Do not load the full skill catalog into the prompt.
 ```
