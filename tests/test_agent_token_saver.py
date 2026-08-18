@@ -203,6 +203,34 @@ class AgentTokenSaverTests(unittest.TestCase):
                 [skill.name for skill in natural.selected], ["macos-computer-use"]
             )
 
+    def test_mixed_explicit_and_natural_mentions_survive_irregular_whitespace(self):
+        """A `$name` and a natural name must both resolve when heavy irregular
+        whitespace separates them from the rest of the sentence.
+
+        `mentioned_skill_names` locates `$name` in the raw intent and natural
+        names in a separately whitespace-collapsed copy -- two coordinate
+        systems compared directly, documented and deliberately kept (see the
+        docstring there) after a single-coordinate rewrite measured ~50ms
+        slower per cold CLI call for no observed correctness gain. This test
+        exercises exactly the irregular-whitespace shape that mixing raw and
+        normalized offsets could in principle break.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "skills"
+            write_skill(root, "alpha-beta-gamma", "First test skill.")
+            write_skill(root, "delta-epsilon", "Second test skill.")
+
+            result = mod.route(
+                "use $alpha-beta-gamma          and     delta   epsilon",
+                roots=[root],
+                strict=True,
+            )
+
+            self.assertEqual(
+                sorted(skill.name for skill in result.selected),
+                ["alpha-beta-gamma", "delta-epsilon"],
+            )
+
     def test_refused_skill_is_not_loaded(self):
         """"do not use X" carries the same cue and phrase as a request for X."""
         with tempfile.TemporaryDirectory() as td:

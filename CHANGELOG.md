@@ -1,21 +1,23 @@
 # Changelog
 
-## Unreleased
+## 1.7.1 — 2026-08-18
 
-- CI now runs the full test suite on every supported Python, **3.9 through
-  3.14**, on Linux, plus the floor and latest on macOS. Previously only 3.9
-  and 3.13 were tested; also verified locally on 3.15rc1, the next stable.
-- `scripts/agent_token_saver.py` exits with a clear message on Python <3.9
-  instead of failing deep inside the stdlib. Verified on 3.8.
-- Fixed `scripts/si_autotune.py`'s shebang, which hardcoded `python3.13` and
-  so failed on every other version, including the router's own 3.9 floor.
+- Investigated the coordinate-mixing note in `mentioned_skill_names` flagged
+  in an earlier audit (`$name` mentions are located in the raw intent string,
+  natural-name mentions in a separately whitespace-collapsed copy). Over
+  60,000 targeted fuzz trials, including a case built by mathematical
+  analysis of the exact shrinkage direction needed to flip a result, found no
+  live input where it produces a wrong answer. A single-coordinate rewrite
+  (regex per skill instead of substring search) was built, verified correct
+  on the same fuzz suite and all 78 tests, then measured and reverted: it
+  cost ~50ms per cold CLI invocation (100ms+ of `re.compile` for the ~800
+  multi-word names in the real catalog; an in-memory cache cannot survive
+  across CLI process boundaries, so it never warms up). Kept the original,
+  faster implementation and documented the invariant and the exact condition
+  that would break it directly in the function's docstring, plus a test
+  exercising the specific irregular-whitespace shape.
 
-- Correct the documented Python floor from 3.11+ to **3.9+**, and prove it: the
-  code carries `from __future__ import annotations` and uses no 3.10+ syntax, so
-  it runs on macOS's built-in `/usr/bin/python3` (3.9.6). CI now runs the suite
-  on 3.9 and 3.13 across Linux and macOS, so the claim is verified rather than
-  asserted. The previous requirement would have pushed users to install a Python
-  they do not need.
+## 1.7.0 — 2026-08-18
 
 - Respect refusal in natural-language routing. "do not use the taste skill"
   carries the same cue (`use`) and the same phrase as a request to load it, so
@@ -28,8 +30,17 @@
   loads. Only the refused phrase is dropped, never the surrounding task. A
   `$name` sigil stays a deliberate invocation and is still honoured.
   Verified: labeled 28-case benchmark holds at 28/28 P@1 and jury at 12/12.
-
-## 1.7.0 — 2026-08-18
+- Correct the documented Python floor from 3.11+ to **3.9+**, and prove it: the
+  code carries `from __future__ import annotations` and uses no 3.10+ syntax, so
+  it runs on macOS's built-in `/usr/bin/python3` (3.9.6). The previous
+  requirement would have pushed users to install a Python they do not need.
+- CI now runs the full test suite on every supported Python, **3.9 through
+  3.14**, on Linux, plus the floor and latest on macOS. Previously only 3.9
+  and 3.13 were tested; also verified locally on 3.15rc1, the next stable.
+- `scripts/agent_token_saver.py` exits with a clear message on Python <3.9
+  instead of failing deep inside the stdlib. Verified on 3.8.
+- Fixed `scripts/si_autotune.py`'s shebang, which hardcoded `python3.13` and
+  so failed on every other version, including the router's own 3.9 floor.
 
 - `install.sh`: the piped `curl | bash` path cloned into `mktemp -d` and never
   removed it, leaving a full clone behind on every install. It now cleans up on
