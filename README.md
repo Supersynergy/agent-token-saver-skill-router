@@ -270,9 +270,19 @@ command aliases (`superscrape`, `smart-fetch`, `hyperfetch`, `superfetch`,
 `synxp`/`synx`, `rtk`, `graphify`, `codegraph`, `freshdocs`, `rg`, `just`,
 `git`, `jq`, SQLite, DuckDB, and guarded token-stack helpers.
 
-`si install-hooks --target all` appends idempotent Codex/Claude PostToolUse and
-Hermes `post_tool_call` observers without replacing existing hooks. It records only
-canonical name, success/failure/unknown, bounded latency, and timestamp. Exact
+`si install` registers the observer for every host that already existed before
+the install (Codex, Claude, Hermes); `si install-hooks --target all` does the
+same on demand and upgrades an older entry in place. The observer is an
+idempotent Codex/Claude PostToolUse or Hermes `post_tool_call` hook that never
+replaces existing hooks. It records the canonical tool name with
+success/failure/unknown, bounded latency and timestamp — and, since 1.8.0, a
+`skill_applied` event when a tool call opens a skill file, by `Read` or by a
+shell `cat`/`sed`, in either on-disk shape (`<name>/SKILL.md`, or GG Coder's
+flat `skills/<name>.md`). Name only; never the path or the command.
+
+GG Coder itself has no hook system, so its sessions cannot report back; the
+router still routes for it, and `si stats` counts what Codex, Claude and Hermes
+open. Exact
 tool mentions always win; semantic selection requires a confidence floor and
 margin. Route frequency never trains rank, and adaptive signals apply only
 after deterministic relevance exists.

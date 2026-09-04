@@ -1753,6 +1753,42 @@ class AgentTokenSaverTests(unittest.TestCase):
             self.assertNotIn("/home/u/", raw)
             self.assertNotIn("sed -n", raw)
 
+    def test_observer_counts_gg_coder_flat_skill_layout_but_not_a_readme(self):
+        """GG Coder stores skills as ~/.gg/skills/<name>.md, not <name>/SKILL.md.
+
+        Verified on 2026-09-04: a GG Coder subagent read its skill file and the
+        observer, matching only SKILL.md, counted nothing. A README.md under a
+        project must still not count, or every doc read becomes a skill open.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            env = {"HOME": td, "AGENT_SKILL_ROUTER_STATE_DIR": str(Path(td) / "state")}
+            flat = {
+                "tool_name": "Read",
+                "tool_input": {"file_path": "/home/u/.gg/skills/agent-token-saver.md"},
+            }
+            flat_shell = {
+                "tool_name": "Bash",
+                "tool_input": {"command": "cat ~/.opencode/skills/bug-detective.md"},
+            }
+            readme = {
+                "tool_name": "Read",
+                "tool_input": {"file_path": "/home/u/project/README.md"},
+            }
+            docs_md = {
+                "tool_name": "Bash",
+                "tool_input": {"command": "cat docs/PLAYBOOK.md"},
+            }
+            with patch.dict(os.environ, env):
+                a = mod.observe_hook_payload(flat)
+                b = mod.observe_hook_payload(flat_shell)
+                c = mod.observe_hook_payload(readme)
+                d = mod.observe_hook_payload(docs_md)
+            self.assertEqual([e["skill"] for e in a], ["agent-token-saver"])
+            self.assertEqual([e["skill"] for e in b if e["event"] == "skill_applied"],
+                             ["bug-detective"])
+            self.assertEqual(c, [])
+            self.assertEqual([e for e in d if e["event"] == "skill_applied"], [])
+
     def test_observer_ignores_generic_dirs_and_records_each_skill_once(self):
         with tempfile.TemporaryDirectory() as td:
             env = {
@@ -1807,6 +1843,19 @@ class AgentTokenSaverTests(unittest.TestCase):
             self.assertIn('"skill_applied"', events)
             self.assertIn('"audit"', events)
 
+            # The flat GG Coder layout must pass the pre-import fast path too.
+            flat = subprocess.run(
+                [sys.executable, str(launcher), "observe"],
+                input=json.dumps({
+                    "tool_name": "Read",
+                    "tool_input": {"file_path": "/a/.gg/skills/router-demo.md"},
+                }),
+                capture_output=True, text=True, env=env,
+            )
+            self.assertEqual(flat.returncode, 0, flat.stderr)
+            events = (Path(td) / "st" / "events.jsonl").read_text(encoding="utf-8")
+            self.assertIn('"router-demo"', events)
+
             # Any other subcommand goes straight through to the module.
             stats = subprocess.run(
                 [sys.executable, str(launcher), "stats"], capture_output=True, text=True, env=env,
@@ -1850,6 +1899,43 @@ class AgentTokenSaverTests(unittest.TestCase):
 
             self.assertNotIn(str(indexer), written)
             self.assertEqual(indexer.read_text(encoding="utf-8"), "foreign command\n")
+
+    def test_install_command_registers_the_observer_hook_in_the_same_run(self):
+        """A fresh machine had the router installed and no observer for weeks.
+
+        `install-hooks` was a second, undocumented step. Now `install` does it
+        for the hosts it targets -- and only where the host's config directory
+        already exists, so it never creates ~/.codex on a machine without Codex.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            env = {**os.environ, "HOME": td}
+            (Path(td) / ".claude").mkdir()
+            with patch.dict(os.environ, {"HOME": td}):
+                mod.install("ggcoder")
+            launcher = Path(td) / ".local" / "bin" / "si"
+
+            result = subprocess.run(
+                [str(launcher), "install", "--target", "all"],
+                capture_output=True, text=True, env=env, check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            targets = {h["target"] for h in payload["hooks"]}
+            self.assertIn("claude", targets)
+            self.assertNotIn("codex", targets, "must not create ~/.codex unasked")
+            settings = json.loads((Path(td) / ".claude" / "settings.json").read_text())
+            observers = [
+                h["command"]
+                for e in settings["hooks"]["PostToolUse"]
+                for h in e["hooks"]
+                if mod.is_observer_command(h.get("command"))
+            ]
+            self.assertEqual(len(observers), 1)
+            # `install all` copies the skill into ~/.codex/skills on purpose;
+            # what must not appear is a hooks.json for a host the user lacked.
+            self.assertFalse((Path(td) / ".codex" / "hooks.json").exists())
+            self.assertFalse((Path(td) / ".hermes" / "config.yaml").exists())
 
     def test_installed_cli_can_install_another_target(self):
         with tempfile.TemporaryDirectory() as td:

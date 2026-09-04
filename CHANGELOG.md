@@ -20,6 +20,16 @@
   place — matcher and command — instead of appending a second one, and touches
   no foreign hook.
 - The PostToolUse matcher now includes `Read|read_file|view_file`.
+- `si install` registers the observer hook in the same run for every host
+  whose config directory existed before the install; it never creates a hook
+  file for a host the user did not have. A fresh machine had the router
+  installed for weeks with no observer, because `install-hooks` was a second,
+  undocumented step.
+- The observer recognises GG Coder's and OpenCode's flat `skills/<name>.md`
+  layout as a skill open, not only `<name>/SKILL.md`. A project `README.md` or
+  `docs/*.md` still never counts. Verified against a live GG Coder subagent:
+  it read its skill file and the observer, matching only `SKILL.md`, counted
+  nothing.
 
 ## 1.7.1 — 2026-08-18
 

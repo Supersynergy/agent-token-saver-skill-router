@@ -2853,7 +2853,20 @@ def _hook_latency_ms(payload: dict[str, object]) -> int:
 # telemetry gap, not the agents. Two shapes cover all hosts: a dedicated file
 # read tool (Claude `Read`), and a shell read (`cat .../SKILL.md`, `sed -n`),
 # which is how Codex and Bash-only hosts open files.
-SKILL_FILE_IN_COMMAND = re.compile(r"(?<![\w.-])(\S*?/[^\s/'\"]+/SKILL\.md)(?![\w.-])")
+# Two on-disk shapes exist. Codex, Claude and Hermes use `<name>/SKILL.md`;
+# GG Coder and OpenCode use a flat `<root>/skills/<name>.md`. A read of either
+# is a skill open. The flat form is accepted only directly under a `skills`
+# directory, so an ordinary README.md in a project never counts.
+SKILL_FILE_IN_COMMAND = re.compile(
+    r"(?<![\w.-])(\S*?/(?:[^\s/'\"]+/SKILL\.md|skills/[^\s/'\"]+\.md))(?![\w.-])"
+)
+
+
+def is_skill_file(raw_path: str) -> bool:
+    path = Path(raw_path)
+    if path.name == "SKILL.md":
+        return True
+    return path.suffix == ".md" and path.parent.name == "skills"
 
 
 def _hook_tool_name(payload: dict[str, object]) -> str:
@@ -2865,7 +2878,7 @@ def _hook_tool_name(payload: dict[str, object]) -> str:
 
 
 def _hook_read_paths(payload: dict[str, object]) -> list[str]:
-    """SKILL.md paths this tool call opened, by file tool or by shell."""
+    """Skill files this tool call opened, by file tool or by shell."""
     paths: list[str] = []
     for container_name in ("tool_input", "input", "arguments"):
         container = payload.get(container_name)
@@ -2873,7 +2886,7 @@ def _hook_read_paths(payload: dict[str, object]) -> list[str]:
             continue
         for key in ("file_path", "path", "target_file"):
             value = container.get(key)
-            if isinstance(value, str) and Path(value).name == "SKILL.md":
+            if isinstance(value, str) and is_skill_file(value):
                 paths.append(value)
     paths.extend(SKILL_FILE_IN_COMMAND.findall(_hook_command(payload)))
     return paths
@@ -4768,8 +4781,10 @@ def launcher_source(module_path: Path) -> str:
         "        sys.exit(0)\n"
         "    tool = payload.get('tool_name') if isinstance(payload, dict) else None\n"
         "    if tool in {'Read', 'read_file', 'view_file'}:\n"
-        "        target = (payload.get('tool_input') or {}).get('file_path', '')\n"
-        "        if not str(target).endswith('SKILL.md'):\n"
+        "        target = str((payload.get('tool_input') or {}).get('file_path', ''))\n"
+        "        # Mirrors is_skill_file(): <name>/SKILL.md, or flat skills/<name>.md.\n"
+        "        flat = target.endswith('.md') and target.rsplit('/', 2)[-2:-1] == ['skills']\n"
+        "        if not (target.endswith('/SKILL.md') or flat):\n"
         "            sys.exit(0)\n"
         "    sys.stdin = __import__('io').StringIO(json.dumps(payload))\n"
         "\n"
@@ -4984,12 +4999,27 @@ def main() -> int:
         )
         return 0
     if args.cmd == "install":
+        # Register the observer in the same run. Without it the router routes
+        # but never learns which skills get opened; on a fresh machine this was
+        # an undocumented second step, and `si stats` stayed at zero applied.
+        # Only for hosts that were present *before* this install: `install all`
+        # creates ~/.codex/skills on every machine, so "the directory exists"
+        # would be true by construction. A hook file in a host directory the
+        # user never had is a host they never asked for.
+        hook_targets = {
+            "all": ["codex", "claude", "hermes"],
+            "codex": ["codex"],
+            "claude": ["claude"],
+            "hermes": ["hermes"],
+        }.get(args.target, [])
+        present = [h for h in hook_targets if hook_config_path(h).parent.is_dir()]
+        written = install(args.target, dry_run=args.dry_run)
+        hooks: list[dict[str, object]] = []
+        for host in present:
+            hooks.extend(install_hooks(host, dry_run=args.dry_run))
         print(
             json.dumps(
-                {
-                    "written": install(args.target, dry_run=args.dry_run),
-                    "dry_run": args.dry_run,
-                },
+                {"written": written, "hooks": hooks, "dry_run": args.dry_run},
                 indent=2,
             )
         )
