@@ -4,8 +4,28 @@ set -euo pipefail
 #   curl -fsSL https://raw.githubusercontent.com/Supersynergy/agent-token-saver-skill-router/main/install.sh | bash -s -- claude
 target="${1:-all}"
 
-command -v python3 >/dev/null 2>&1 || {
-  echo "agent-token-saver-skill-router: python3 is required (3.11+)" >&2
+find_python() {
+  local candidate resolved
+  for candidate in python3.14 python3.13 python3.12 python3.11 python3.10 python3.9 python3; do
+    resolved="$(command -v "$candidate" 2>/dev/null || true)"
+    [[ -n "$resolved" ]] || continue
+    case "$resolved" in */shims/*) continue ;; esac
+    if "$resolved" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' 2>/dev/null; then
+      printf '%s\n' "$resolved"
+      return 0
+    fi
+  done
+  resolved="$(command -v python3 2>/dev/null || true)"
+  if [[ -n "$resolved" ]] && "$resolved" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' 2>/dev/null; then
+    printf '%s\n' "$resolved"
+    return 0
+  fi
+  return 1
+}
+
+router_python="$(find_python || true)"
+[[ -n "$router_python" ]] || {
+  echo "agent-token-saver-skill-router: Python 3.9+ is required on PATH (python3 or python3.X)" >&2
   exit 1
 }
 
@@ -26,7 +46,7 @@ else
   git clone --quiet --depth 1 "$repo_url" "$repo"
 fi
 
-python3 "$repo/scripts/agent_token_saver.py" install --target "$target"
+"$router_python" "$repo/scripts/agent_token_saver.py" install --target "$target"
 printf '\n%s\n%s\n' \
   'Installed agent-token-saver-skill-router.' \
   'Restart the target agent or start a fresh session so prompt caches rebuild.'

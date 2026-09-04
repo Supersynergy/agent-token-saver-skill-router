@@ -2691,6 +2691,7 @@ def record_tool_usage(
     latency_ms: int = 0,
     *,
     event_name: str = "tool_use",
+    source: str | None = None,
 ) -> dict[str, object]:
     """Record only canonical name/outcome/latency, never command args or output."""
     normalized = canonical_tool_name(tool_name)
@@ -2739,6 +2740,8 @@ def record_tool_usage(
         "outcome": outcome,
         "latency_ms": latency_ms,
     }
+    if source == "ggcoder":
+        event["source"] = source
     if telemetry_enabled():
         append_jsonl(route_events_file(), event)
     return event
@@ -2820,6 +2823,8 @@ def _hook_outcome(payload: dict[str, object]) -> str:
     for candidate in candidates:
         if not isinstance(candidate, dict):
             continue
+        if candidate.get("is_error") is True or candidate.get("isError") is True:
+            return "failure"
         for key in ("exit_code", "exitCode", "code"):
             value = candidate.get(key)
             if isinstance(value, int):
@@ -2892,7 +2897,7 @@ def _hook_read_paths(payload: dict[str, object]) -> list[str]:
     return paths
 
 
-def record_skill_applied(skill_name: str) -> dict[str, object]:
+def record_skill_applied(skill_name: str, *, source: str | None = None) -> dict[str, object]:
     """Record that a SKILL.md was opened. Name only; never the path or content."""
     name = skill_name.strip().lower()
     if not name or name in GENERIC_SKILL_NAMES:
@@ -2924,6 +2929,8 @@ def record_skill_applied(skill_name: str) -> dict[str, object]:
         "event": "skill_applied",
         "skill": name,
     }
+    if source == "ggcoder":
+        event["source"] = source
     if telemetry_enabled():
         append_jsonl(route_events_file(), event)
     return event
@@ -2932,16 +2939,28 @@ def record_skill_applied(skill_name: str) -> dict[str, object]:
 def observe_hook_payload(payload: dict[str, object]) -> list[dict[str, object]]:
     outcome = _hook_outcome(payload)
     latency_ms = _hook_latency_ms(payload)
+    source = "ggcoder" if payload.get("source") == "ggcoder" else None
     events = [
-        record_tool_usage(name, outcome, latency_ms)
+        record_tool_usage(name, outcome, latency_ms, source=source)
         for name in observed_tool_names(_hook_command(payload))
     ]
+    if outcome == "failure":
+        return events
     seen: set[str] = set()
+    if _hook_tool_name(payload).lower() == "skill":
+        for key in ("tool_input", "input", "arguments"):
+            args = payload.get(key)
+            name = args.get("skill") if isinstance(args, dict) else None
+            if (isinstance(name, str) and name.lower() not in GENERIC_SKILL_NAMES
+                    and re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,127}", name, re.I)):
+                seen.add(name.lower())
+                events.append(record_skill_applied(name, source=source))
+                break
     for raw_path in _hook_read_paths(payload):
         name = event_skill_name({"path": raw_path})
         if name and name not in seen and name not in GENERIC_SKILL_NAMES:
             seen.add(name)
-            events.append(record_skill_applied(name))
+            events.append(record_skill_applied(name, source=source))
     return events
 
 
@@ -2966,18 +2985,23 @@ def hook_interpreter() -> str:
 
 
 def hook_command() -> str:
-    return f"{hook_interpreter()} {Path.home() / '.local' / 'bin' / 'si'} observe"
+    return shlex.join([hook_interpreter(), str(Path.home() / '.local' / 'bin' / 'si'), "observe"])
 
 
 def is_observer_command(command: object) -> bool:
     """Match any generation of the observer command, with or without interpreter."""
     if not isinstance(command, str):
         return False
-    parts = command.split()
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return False
     return len(parts) >= 2 and parts[-1] == "observe" and parts[-2].endswith("/si")
 
 
 def hook_config_path(target: str) -> Path:
+    if target == "ggcoder":
+        return Path.home() / ".gg" / "extensions" / "agent-skill-router.js"
     if target == "codex":
         return Path.home() / ".codex" / "hooks.json"
     if target == "claude":
@@ -2987,8 +3011,24 @@ def hook_config_path(target: str) -> Path:
     raise ValueError(f"unknown hook target: {target}")
 
 
+def hermes_has_observer_command(text: str) -> bool:
+    for match in re.finditer(r'(?m)^\s+command:\s*("(?:[^"\\]|\\.)*")\s*$', text):
+        try:
+            command = json.loads(match.group(1))
+        except ValueError:
+            continue
+        if is_observer_command(command):
+            return True
+    return False
+
+
 def hook_has_observer(target: str) -> bool:
     path = hook_config_path(target)
+    if target == "ggcoder":
+        try:
+            return path.read_text(encoding="utf-8").startswith("// agent-skill-router managed GG observer\n")
+        except OSError:
+            return False
     if target == "hermes":
         try:
             text = path.read_text(encoding="utf-8")
@@ -2997,7 +3037,7 @@ def hook_has_observer(target: str) -> bool:
         return (
             re.search(r"(?m)^hooks:\s*$", text) is not None
             and re.search(r"(?m)^  post_tool_call:\s*$", text) is not None
-            and re.search(r'command: "[^"]*/si observe"', text) is not None
+            and hermes_has_observer_command(text)
         )
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -3028,7 +3068,7 @@ def install_hermes_hook(dry_run: bool = False) -> dict[str, object]:
     except FileNotFoundError:
         text = ""
     command_line = f"      command: {json.dumps(hook_command())}\n"
-    if re.search(r'command: "[^"]*/si observe"', text):
+    if hermes_has_observer_command(text):
         return {
             "target": "hermes",
             "path": str(path),
@@ -3091,9 +3131,27 @@ def install_hermes_hook(dry_run: bool = False) -> dict[str, object]:
 def install_hooks(
     target: str = "all", dry_run: bool = False
 ) -> list[dict[str, object]]:
-    names = ["codex", "claude", "hermes"] if target == "all" else [target]
+    names = ["codex", "claude", "hermes", "ggcoder"] if target == "all" else [target]
     results = []
     for name in names:
+        if name == "ggcoder":
+            path = hook_config_path(name)
+            module = Path.home() / ".local/lib/agent-token-saver-skill-router/ggcoder_observer.mjs"
+            text = (
+                "// agent-skill-router managed GG observer\n"
+                f"import createObserver from {json.dumps(module.as_uri())};\n"
+                "export default () => createObserver("
+                + json.dumps({"python": hook_interpreter(), "launcher": str(Path.home() / ".local/bin/agent-skill-route")})
+                + ");\n"
+            )
+            old = path.read_text(encoding="utf-8") if path.exists() else None
+            if old is not None and not hook_has_observer(name):
+                raise ValueError(f"refusing to overwrite an unmanaged GG extension: {path}")
+            changed = old != text
+            if changed and not dry_run:
+                atomic_write_text(path, text)
+            results.append({"target": name, "path": str(path), "changed": changed, "dry_run": dry_run})
+            continue
         if name == "hermes":
             results.append(install_hermes_hook(dry_run=dry_run))
             continue
@@ -4145,6 +4203,11 @@ def bench(
     pct = round((saved / full_tokens * 100), 2) if full_tokens else 0.0
     return {
         "intent": intent,
+        "measurement_scope": "catalog_metadata_vs_router_block",
+        "counterfactual": "all indexed skill names and descriptions loaded into context",
+        "estimator": "characters_divided_by_4",
+        "includes_selected_skill_bodies": False,
+        "provider_savings_verified": False,
         "catalog_source": catalog_data.source,
         "index_path": str(catalog_data.index_path),
         "skills_scanned": len(skills),
@@ -4668,7 +4731,7 @@ def doctor_report(refresh_index: bool = False) -> dict[str, object]:
                 "path": str(hook_config_path(target)),
                 "installed": hook_has_observer(target),
             }
-            for target in ("codex", "claude", "hermes")
+            for target in ("codex", "claude", "hermes", "ggcoder")
         ],
         "auto_route_excluded": sorted(AUTO_ROUTE_EXCLUDED),
         "skill_aliases": skill_alias_report(catalog_data),
@@ -4708,6 +4771,7 @@ def install(target: str, dry_run: bool = False) -> list[str]:
     names = list(targets) if target == "all" else [target]
     skill_src = source_skill_file()
     script_src = Path(__file__).resolve()
+    observer_src = script_src.with_name("ggcoder_observer.mjs")
     written: list[str] = []
     for name in names:
         if name not in targets:
@@ -4726,6 +4790,9 @@ def install(target: str, dry_run: bool = False) -> list[str]:
             script_dest.parent.mkdir(parents=True, exist_ok=True)
             if script_src.resolve() != script_dest.resolve():
                 shutil.copyfile(script_src, script_dest)
+            helper = script_dest.with_name(observer_src.name)
+            if observer_src.resolve() != helper.resolve():
+                shutil.copyfile(observer_src, helper)
     # The launchers used to be full copies of this script. A script is compiled
     # on every run -- Python caches bytecode only for imported modules -- and
     # that compile was most of the observer's 60 ms on every tool call. So the
@@ -4738,6 +4805,10 @@ def install(target: str, dry_run: bool = False) -> list[str]:
         if script_src.resolve() != module_dest.resolve():
             shutil.copyfile(script_src, module_dest)
         module_dest.chmod(0o644)
+    observer_dest = module_dest.with_name("ggcoder_observer.mjs")
+    written.append(str(observer_dest))
+    if not dry_run and observer_src.resolve() != observer_dest.resolve():
+        shutil.copyfile(observer_src, observer_dest)
     for launcher_name in ("agent-skill-route", "si"):
         launcher = home / ".local" / "bin" / launcher_name
         if launcher_name == "si" and launcher.exists():
@@ -4780,11 +4851,15 @@ def launcher_source(module_path: Path) -> str:
         "    except (TypeError, ValueError):\n"
         "        sys.exit(0)\n"
         "    tool = payload.get('tool_name') if isinstance(payload, dict) else None\n"
-        "    if tool in {'Read', 'read_file', 'view_file'}:\n"
-        "        target = str((payload.get('tool_input') or {}).get('file_path', ''))\n"
+        "    if isinstance(tool, str) and tool in {'Read', 'read_file', 'view_file'}:\n"
+        "        paths = [value for key in ('tool_input', 'input', 'arguments')\n"
+        "                 if isinstance(payload.get(key), dict)\n"
+        "                 for field in ('file_path', 'path', 'target_file')\n"
+        "                 if isinstance(value := payload[key].get(field), str)]\n"
         "        # Mirrors is_skill_file(): <name>/SKILL.md, or flat skills/<name>.md.\n"
-        "        flat = target.endswith('.md') and target.rsplit('/', 2)[-2:-1] == ['skills']\n"
-        "        if not (target.endswith('/SKILL.md') or flat):\n"
+        "        skill = any(p.rsplit('/', 1)[-1] == 'SKILL.md' or (p.endswith('.md')\n"
+        "                    and p.rsplit('/', 2)[-2:-1] == ['skills']) for p in paths)\n"
+        "        if paths and not skill:\n"
         "            sys.exit(0)\n"
         "    sys.stdin = __import__('io').StringIO(json.dumps(payload))\n"
         "\n"
@@ -4923,7 +4998,7 @@ def main() -> int:
     sub.add_parser("observe")
     p_install_hooks = sub.add_parser("install-hooks")
     p_install_hooks.add_argument(
-        "--target", default="all", choices=["all", "codex", "claude", "hermes"]
+        "--target", default="all", choices=["all", "codex", "claude", "hermes", "ggcoder"]
     )
     p_install_hooks.add_argument("--dry-run", action="store_true")
     sub.add_parser("hook-status")
@@ -5007,12 +5082,17 @@ def main() -> int:
         # would be true by construction. A hook file in a host directory the
         # user never had is a host they never asked for.
         hook_targets = {
-            "all": ["codex", "claude", "hermes"],
+            "all": ["codex", "claude", "hermes", "ggcoder"],
             "codex": ["codex"],
             "claude": ["claude"],
             "hermes": ["hermes"],
+            "ggcoder": ["ggcoder"],
         }.get(args.target, [])
-        present = [h for h in hook_targets if hook_config_path(h).parent.is_dir()]
+        present = []
+        for host in hook_targets:
+            directory = Path.home() / ".gg" if host == "ggcoder" else hook_config_path(host).parent
+            if directory.is_dir() or args.target == "ggcoder":
+                present.append(host)
         written = install(args.target, dry_run=args.dry_run)
         hooks: list[dict[str, object]] = []
         for host in present:
@@ -5286,7 +5366,7 @@ def main() -> int:
                 "path": str(hook_config_path(target)),
                 "installed": hook_has_observer(target),
             }
-            for target in ("codex", "claude", "hermes")
+            for target in ("codex", "claude", "hermes", "ggcoder")
         ]
         print(json.dumps(status, indent=2, ensure_ascii=False))
         return 0 if all(item["installed"] for item in status) else 1

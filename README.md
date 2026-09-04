@@ -271,7 +271,7 @@ command aliases (`superscrape`, `smart-fetch`, `hyperfetch`, `superfetch`,
 `git`, `jq`, SQLite, DuckDB, and guarded token-stack helpers.
 
 `si install` registers the observer for every host that already existed before
-the install (Codex, Claude, Hermes); `si install-hooks --target all` does the
+the install (Codex, Claude, Hermes, GG Coder); `si install-hooks --target all` does the
 same on demand and upgrades an older entry in place. The observer is an
 idempotent Codex/Claude PostToolUse or Hermes `post_tool_call` hook that never
 replaces existing hooks. It records the canonical tool name with
@@ -280,9 +280,22 @@ success/failure/unknown, bounded latency and timestamp — and, since 1.8.0, a
 shell `cat`/`sed`, in either on-disk shape (`<name>/SKILL.md`, or GG Coder's
 flat `skills/<name>.md`). Name only; never the path or the command.
 
-GG Coder itself has no hook system, so its sessions cannot report back; the
-router still routes for it, and `si stats` counts what Codex, Claude and Hermes
-open. Exact
+GG Coder uses its native extension loader and `tool_call_start` / `tool_call_end`
+events. `install --target ggcoder` installs the observer even on a fresh HOME.
+It records successful native `skill` calls, skill-file reads and shell-tool
+outcomes. Failed skill loads do not count. Ordinary file reads launch nothing.
+The observer adds no model context, leaves tool results intact, and bounds each
+local delivery to one second. Start a new GG session after installation.
+This is observation; it does not install Codex/Claude prompt or Stop hooks in GG.
+
+The actual GG 5.46.2 session, extension loader and Bash/skill tools were exercised
+using a local deterministic provider. Reproduce without a paid model call:
+
+```bash
+node scripts/ggcoder_runtime_smoke.mjs /path/to/installed/ggcoder /path/to/router /path/to/agent-token-saver
+```
+
+Exact
 tool mentions always win; semantic selection requires a confidence floor and
 margin. Route frequency never trains rank, and adaptive signals apply only
 after deterministic relevance exists.
@@ -356,6 +369,12 @@ You get:
   "reduction_pct": 99.76
 }
 ```
+
+This compares the complete metadata catalog with the router block, using
+characters divided by four. It excludes selected skill bodies, hook overhead,
+conversation history and provider cache accounting. The JSON names this
+counterfactual and reports `provider_savings_verified: false`; the percentage
+does not measure a session's net token or monetary saving.
 
 ---
 

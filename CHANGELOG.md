@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- GG Coder gets a native observer extension: tool-call events feed `si observe`,
+  including native skill loads. Failed skill loads are excluded. Verified
+  through GG 5.46.2's actual session and tool runner with a local test provider.
+  This corrects the earlier claim that GG has no extension hook surface.
+- The installer selects a supported Python on PATH, including versioned names,
+  and reports the router's actual 3.9 minimum when none is available.
+- The installed observer handles `file_path`, `path` and `target_file` under
+  `tool_input`, `input` and `arguments`. Malformed read inputs stay fail-open;
+  failed skill reads no longer count as applied.
+- Observer hook commands quote paths with spaces; repeated installation keeps
+  one observer on Claude, Codex and Hermes.
+- `bench` identifies its metadata-catalog counterfactual and explicitly marks
+  provider savings as unverified.
+
 ## 1.8.0 — 2026-09-04
 
 - **The apply loop is closed for Claude Code and Codex.** `si stats` showed a
