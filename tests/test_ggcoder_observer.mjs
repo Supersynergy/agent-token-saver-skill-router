@@ -43,6 +43,24 @@ test("native skill calls and skill reads are observed, unrelated reads skipped",
   extension.deactivate();
 });
 
+test("SuperGG host is reported explicitly without counting routing as a loaded skill", () => {
+  const previous = process.env.AGENT_SKILL_ROUTER_HOST;
+  process.env.AGENT_SKILL_ROUTER_HOST = "superggcoder";
+  const { bus, calls, extension } = fixture();
+  try {
+    for (const [id, skill] of [["r", "?find skill"], ["s", "audit"]]) {
+      bus.emit("tool_call_start", { toolCallId: id, name: "skill", args: { skill } });
+      bus.emit("tool_call_end", { toolCallId: id, result: "ok" });
+    }
+    assert.equal(calls.length, 1);
+    assert.equal(JSON.parse(calls[0][2].input).source, "superggcoder");
+  } finally {
+    extension.deactivate();
+    if (previous === undefined) delete process.env.AGENT_SKILL_ROUTER_HOST;
+    else process.env.AGENT_SKILL_ROUTER_HOST = previous;
+  }
+});
+
 test("activation is idempotent, deactivation unsubscribes, broken observer stays fail-open", () => {
   const { bus, extension, context } = fixture(() => { throw new Error("fixture"); });
   extension.activate(context);

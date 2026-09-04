@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- SuperGG Coder gets an opt-out compact skill catalog through its `sgg` launcher:
+  in-memory module hooks, local search using the existing skill tool, native
+  outcome telemetry and an isolated launcher A/B test. Small catalogs remain
+  native. Project `.gg/skills` now participates in local routing.
 - GG Coder gets a native observer extension: tool-call events feed `si observe`,
   including native skill loads. Failed skill loads are excluded. Verified
   through GG 5.46.2's actual session and tool runner with a local test provider.

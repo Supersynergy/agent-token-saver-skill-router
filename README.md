@@ -6,8 +6,10 @@
 [![CI](https://github.com/Supersynergy/agent-token-saver-skill-router/actions/workflows/ci.yml/badge.svg)](https://github.com/Supersynergy/agent-token-saver-skill-router/actions/workflows/ci.yml)
 ![Agents](https://img.shields.io/badge/agents-Claude%20%7C%20Codex%20%7C%20Hermes%20%7C%20GG%20Coder%20%7C%20OpenCode-5b5bd6)
 
-Skill systems paste every `SKILL.md` into the prompt before the agent has any idea
-which one it needs. You pay for all of them, on every turn.
+Large skill libraries can fill the prompt with descriptions or prematurely
+loaded skill bodies. GG, for example, includes descriptions in both the system
+prompt and the skill-tool schema. The cost depends on what the host loads and
+how the provider caches it.
 
 This router returns none for trivial or ambiguous work, one primary skill for a
 single workflow, or up to four complementary support skills for distinct task
@@ -19,6 +21,11 @@ model is called.
 
 Works with Hermes, Claude Code, Codex CLI, GG Coder, OpenCode, Cursor and Windsurf.
 A job with several phases can ask for more, but still reads one phase at a time.
+
+**SuperGG Coder:** the optional [sgg integration](docs/SUPERGG_CODER.md) removes
+large duplicate skill catalogs from requests, adds local search to the existing
+skill tool, and records native usage hooks. Tested through the actual launcher
+with a deterministic provider, including failed checks and an off switch.
 
 Repo: https://github.com/Supersynergy/agent-token-saver-skill-router
 

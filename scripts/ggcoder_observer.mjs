@@ -55,7 +55,7 @@ export default function createObserver({ python, launcher, run = spawnSync }) {
           const failed = event.isError === true || /^Error:/.test(result) || (exit && exit[1].trim() !== "0");
           const payload = {
             ...item.call,
-            source: "ggcoder",
+            source: process.env.AGENT_SKILL_ROUTER_HOST === "superggcoder" ? "superggcoder" : "ggcoder",
             tool_response: { status: failed ? "error" : "success" },
             duration_ms: Math.round(performance.now() - item.started),
           };

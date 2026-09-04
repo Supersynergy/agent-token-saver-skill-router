@@ -13,6 +13,18 @@ from test_agent_token_saver import ROOT, mod
 
 
 class InstallObserveRegressions(unittest.TestCase):
+    def test_project_gg_skills_are_indexed_before_global_skills(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td) / "home"
+            project = Path(td) / "project"
+            local = project / ".gg/skills"
+            global_root = home / ".gg/skills"
+            local.mkdir(parents=True)
+            global_root.mkdir(parents=True)
+            with patch.dict(os.environ, {"HOME": str(home)}):
+                roots = mod.common_roots(project)
+                self.assertLess(roots.index(local.resolve()), roots.index(global_root.resolve()))
+
     @unittest.skipUnless(shutil.which("node"), "GG Coder requires Node.js")
     def test_native_gg_extension_contract(self):
         result = subprocess.run(
@@ -31,6 +43,8 @@ class InstallObserveRegressions(unittest.TestCase):
                 self.assertTrue(mod.hook_has_observer("ggcoder"))
                 events = mod.observe_hook_payload({"tool_name": "skill", "tool_input": {"skill": "audit"}})
                 self.assertEqual([e["skill"] for e in events], ["audit"])
+                events = mod.observe_hook_payload({"tool_name": "skill", "tool_input": {"skill": "audit"}, "source": "superggcoder"})
+                self.assertEqual(events[0]["source"], "superggcoder")
 
     def test_bootstrap_finds_versioned_python_and_rejects_unsupported_python(self):
         with tempfile.TemporaryDirectory() as td:

@@ -2035,6 +2035,7 @@ def common_roots(cwd: Path | None = None) -> list[Path]:
         cwd / ".agents" / "skills",
         cwd / ".claude" / "skills",
         cwd / ".codex" / "skills",
+        cwd / ".gg" / "skills",
         # Canonical global distribution. Keep this before host-specific bridges
         # so a skill installed through Superskills has one authoritative path.
         home / "superskills" / "skills",
@@ -2740,7 +2741,7 @@ def record_tool_usage(
         "outcome": outcome,
         "latency_ms": latency_ms,
     }
-    if source == "ggcoder":
+    if source in ("ggcoder", "superggcoder"):
         event["source"] = source
     if telemetry_enabled():
         append_jsonl(route_events_file(), event)
@@ -2929,7 +2930,7 @@ def record_skill_applied(skill_name: str, *, source: str | None = None) -> dict[
         "event": "skill_applied",
         "skill": name,
     }
-    if source == "ggcoder":
+    if source in ("ggcoder", "superggcoder"):
         event["source"] = source
     if telemetry_enabled():
         append_jsonl(route_events_file(), event)
@@ -2939,7 +2940,7 @@ def record_skill_applied(skill_name: str, *, source: str | None = None) -> dict[
 def observe_hook_payload(payload: dict[str, object]) -> list[dict[str, object]]:
     outcome = _hook_outcome(payload)
     latency_ms = _hook_latency_ms(payload)
-    source = "ggcoder" if payload.get("source") == "ggcoder" else None
+    source = payload.get("source") if payload.get("source") in ("ggcoder", "superggcoder") else None
     events = [
         record_tool_usage(name, outcome, latency_ms, source=source)
         for name in observed_tool_names(_hook_command(payload))
@@ -4793,6 +4794,10 @@ def install(target: str, dry_run: bool = False) -> list[str]:
             helper = script_dest.with_name(observer_src.name)
             if observer_src.resolve() != helper.resolve():
                 shutil.copyfile(observer_src, helper)
+            supergg_src = script_src.with_name("superggcoder.mjs")
+            supergg_dest = script_dest.with_name("superggcoder.mjs")
+            if supergg_src.exists() and supergg_src.resolve() != supergg_dest.resolve():
+                shutil.copyfile(supergg_src, supergg_dest)
     # The launchers used to be full copies of this script. A script is compiled
     # on every run -- Python caches bytecode only for imported modules -- and
     # that compile was most of the observer's 60 ms on every tool call. So the
@@ -4809,6 +4814,12 @@ def install(target: str, dry_run: bool = False) -> list[str]:
     written.append(str(observer_dest))
     if not dry_run and observer_src.resolve() != observer_dest.resolve():
         shutil.copyfile(observer_src, observer_dest)
+    supergg_src = script_src.with_name("superggcoder.mjs")
+    supergg_dest = module_dest.with_name("superggcoder.mjs")
+    if supergg_src.exists():
+        written.append(str(supergg_dest))
+        if not dry_run and supergg_src.resolve() != supergg_dest.resolve():
+            shutil.copyfile(supergg_src, supergg_dest)
     for launcher_name in ("agent-skill-route", "si"):
         launcher = home / ".local" / "bin" / launcher_name
         if launcher_name == "si" and launcher.exists():
