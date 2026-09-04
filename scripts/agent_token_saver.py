@@ -2512,6 +2512,7 @@ def load_usage_data(*, include_routes: bool = False) -> UsageData:
             if not isinstance(record, dict):
                 continue
             signal = signal_for(data, str(name))
+            signal.applied += int(record.get("applied") or 0)
             signal.success += int(record.get("success") or 0)
             signal.failure += int(record.get("failure") or 0)
             update_last_activity(signal, record.get("updated_at"))
@@ -2845,20 +2846,122 @@ def _hook_latency_ms(payload: dict[str, object]) -> int:
     return 0
 
 
+# A routed skill only counts once the agent actually opens its SKILL.md. Until
+# this observer existed, that signal came only from GG Coder and Hermes sidecar
+# files; Claude Code and Codex -- the hosts producing nearly every route --
+# reported nothing, so `si stats` showed a 3.5% apply rate that measured the
+# telemetry gap, not the agents. Two shapes cover all hosts: a dedicated file
+# read tool (Claude `Read`), and a shell read (`cat .../SKILL.md`, `sed -n`),
+# which is how Codex and Bash-only hosts open files.
+SKILL_FILE_IN_COMMAND = re.compile(r"(?<![\w.-])(\S*?/[^\s/'\"]+/SKILL\.md)(?![\w.-])")
+
+
+def _hook_tool_name(payload: dict[str, object]) -> str:
+    for key in ("tool_name", "tool", "name"):
+        value = payload.get(key)
+        if isinstance(value, str):
+            return value
+    return ""
+
+
+def _hook_read_paths(payload: dict[str, object]) -> list[str]:
+    """SKILL.md paths this tool call opened, by file tool or by shell."""
+    paths: list[str] = []
+    for container_name in ("tool_input", "input", "arguments"):
+        container = payload.get(container_name)
+        if not isinstance(container, dict):
+            continue
+        for key in ("file_path", "path", "target_file"):
+            value = container.get(key)
+            if isinstance(value, str) and Path(value).name == "SKILL.md":
+                paths.append(value)
+    paths.extend(SKILL_FILE_IN_COMMAND.findall(_hook_command(payload)))
+    return paths
+
+
+def record_skill_applied(skill_name: str) -> dict[str, object]:
+    """Record that a SKILL.md was opened. Name only; never the path or content."""
+    name = skill_name.strip().lower()
+    if not name or name in GENERIC_SKILL_NAMES:
+        raise ValueError(f"not a skill name: {skill_name!r}")
+    try:
+        state = json.loads(feedback_state_file().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = {}
+    if not isinstance(state, dict) or state.get("schema") not in {None, TELEMETRY_SCHEMA}:
+        state = {}
+    skills = state.get("skills")
+    if not isinstance(skills, dict):
+        skills = {}
+        state["skills"] = skills
+    record = skills.get(name)
+    if not isinstance(record, dict):
+        record = {"success": 0, "failure": 0}
+        skills[name] = record
+    record["applied"] = int(record.get("applied") or 0) + 1
+    record["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    state["schema"] = TELEMETRY_SCHEMA
+    atomic_write_text(
+        feedback_state_file(),
+        json.dumps(state, ensure_ascii=False, separators=(",", ":")) + "\n",
+    )
+    event = {
+        "schema": TELEMETRY_SCHEMA,
+        "ts": record["updated_at"],
+        "event": "skill_applied",
+        "skill": name,
+    }
+    if telemetry_enabled():
+        append_jsonl(route_events_file(), event)
+    return event
+
+
 def observe_hook_payload(payload: dict[str, object]) -> list[dict[str, object]]:
     outcome = _hook_outcome(payload)
     latency_ms = _hook_latency_ms(payload)
-    return [
+    events = [
         record_tool_usage(name, outcome, latency_ms)
         for name in observed_tool_names(_hook_command(payload))
     ]
+    seen: set[str] = set()
+    for raw_path in _hook_read_paths(payload):
+        name = event_skill_name({"path": raw_path})
+        if name and name not in seen and name not in GENERIC_SKILL_NAMES:
+            seen.add(name)
+            events.append(record_skill_applied(name))
+    return events
 
 
-HOOK_MATCHER = r"Bash|Shell|shell|shell_command|exec_command|functions\.exec_command"
+# File-read tools join the matcher so a skill open is visible. The observer's
+# hot path is startup cost, not work, which is why hook_command() pins a real
+# interpreter: through a pyenv shim `si observe` measured 200 ms per call, and
+# on every Read that is a latency tax; via the resolved binary it is 60 ms.
+HOOK_MATCHER = (
+    r"Bash|Shell|shell|shell_command|exec_command|functions\.exec_command"
+    r"|Read|read_file|view_file"
+)
+
+
+def hook_interpreter() -> str:
+    """The real interpreter, never a version-manager shim.
+
+    sys.executable is already resolved: a shim execs the real binary, so the
+    running process always reports the target. Pinning it in the hook command
+    is what removes the shim from every later invocation.
+    """
+    return sys.executable or "python3"
 
 
 def hook_command() -> str:
-    return str(Path.home() / ".local" / "bin" / "si") + " observe"
+    return f"{hook_interpreter()} {Path.home() / '.local' / 'bin' / 'si'} observe"
+
+
+def is_observer_command(command: object) -> bool:
+    """Match any generation of the observer command, with or without interpreter."""
+    if not isinstance(command, str):
+        return False
+    parts = command.split()
+    return len(parts) >= 2 and parts[-1] == "observe" and parts[-2].endswith("/si")
 
 
 def hook_config_path(target: str) -> Path:
@@ -2881,7 +2984,7 @@ def hook_has_observer(target: str) -> bool:
         return (
             re.search(r"(?m)^hooks:\s*$", text) is not None
             and re.search(r"(?m)^  post_tool_call:\s*$", text) is not None
-            and f"command: {json.dumps(hook_command())}" in text
+            and re.search(r'command: "[^"]*/si observe"', text) is not None
         )
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -2897,7 +3000,7 @@ def hook_has_observer(target: str) -> bool:
     for entry in post:
         hooks = entry.get("hooks", []) if isinstance(entry, dict) else []
         if isinstance(hooks, list) and any(
-            isinstance(hook, dict) and hook.get("command") == hook_command()
+            isinstance(hook, dict) and is_observer_command(hook.get("command"))
             for hook in hooks
         ):
             return True
@@ -2912,7 +3015,7 @@ def install_hermes_hook(dry_run: bool = False) -> dict[str, object]:
     except FileNotFoundError:
         text = ""
     command_line = f"      command: {json.dumps(hook_command())}\n"
-    if command_line.strip() in text:
+    if re.search(r'command: "[^"]*/si observe"', text):
         return {
             "target": "hermes",
             "path": str(path),
@@ -2996,17 +3099,25 @@ def install_hooks(
         post = hooks.setdefault("PostToolUse", [])
         if not isinstance(post, list):
             raise ValueError(f"expected PostToolUse list in {path}")
-        present = any(
-            isinstance(entry, dict)
-            and any(
-                isinstance(hook, dict) and hook.get("command") == hook_command()
-                for hook in entry.get("hooks", [])
-                if isinstance(entry.get("hooks"), list)
-            )
-            for entry in post
-        )
-        changed = not present
-        if changed:
+        # An older observer entry (Bash-only matcher, shim interpreter) is
+        # brought up to date in place. Only the entry this tool owns is touched;
+        # every other hook stays byte-identical.
+        changed = False
+        found = False
+        for entry in post:
+            if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
+                continue
+            for hook in entry["hooks"]:
+                if not isinstance(hook, dict) or not is_observer_command(hook.get("command")):
+                    continue
+                found = True
+                if hook.get("command") != hook_command():
+                    hook["command"] = hook_command()
+                    changed = True
+                if entry.get("matcher") != HOOK_MATCHER:
+                    entry["matcher"] = HOOK_MATCHER
+                    changed = True
+        if not found:
             post.append(
                 {
                     "matcher": HOOK_MATCHER,
@@ -3015,8 +3126,9 @@ def install_hooks(
                     ],
                 }
             )
-            if not dry_run:
-                atomic_write_text(path, json.dumps(payload, indent=2) + "\n")
+            changed = True
+        if changed and not dry_run:
+            atomic_write_text(path, json.dumps(payload, indent=2) + "\n")
         results.append(
             {"target": name, "path": str(path), "changed": changed, "dry_run": dry_run}
         )
@@ -4601,6 +4713,18 @@ def install(target: str, dry_run: bool = False) -> list[str]:
             script_dest.parent.mkdir(parents=True, exist_ok=True)
             if script_src.resolve() != script_dest.resolve():
                 shutil.copyfile(script_src, script_dest)
+    # The launchers used to be full copies of this script. A script is compiled
+    # on every run -- Python caches bytecode only for imported modules -- and
+    # that compile was most of the observer's 60 ms on every tool call. So the
+    # module now lives under ~/.local/lib where it earns a __pycache__, and the
+    # launchers are stubs that import it: 40 ms, and 12 ms on the fast path.
+    module_dest = home / ".local" / "lib" / "agent-token-saver-skill-router" / script_src.name
+    written.append(str(module_dest))
+    if not dry_run:
+        module_dest.parent.mkdir(parents=True, exist_ok=True)
+        if script_src.resolve() != module_dest.resolve():
+            shutil.copyfile(script_src, module_dest)
+        module_dest.chmod(0o644)
     for launcher_name in ("agent-skill-route", "si"):
         launcher = home / ".local" / "bin" / launcher_name
         if launcher_name == "si" and launcher.exists():
@@ -4616,10 +4740,46 @@ def install(target: str, dry_run: bool = False) -> list[str]:
         written.append(str(launcher))
         if not dry_run:
             launcher.parent.mkdir(parents=True, exist_ok=True)
-            if script_src.resolve() != launcher.resolve():
-                shutil.copyfile(script_src, launcher)
+            atomic_write_text(launcher, launcher_source(module_dest))
             launcher.chmod(0o755)
     return written
+
+
+def launcher_source(module_path: Path) -> str:
+    """A stub that imports the cached module, with a pre-import observer fast path.
+
+    The observer runs after every tool call, and nearly every Read is not a
+    SKILL.md. Deciding that before importing a 5,000-line module is the
+    difference between 40 ms and 12 ms on the most frequent hook event.
+    """
+    return (
+        f"#!{hook_interpreter()}\n"
+        '"""Adaptive token-saving skill router -- launcher stub.\n\n'
+        "Generated by `si install`; the module it loads is the file under\n"
+        f"{module_path.parent}. Re-run the install to refresh both.\n"
+        '"""\n'
+        "import sys\n"
+        "\n"
+        "if sys.argv[1:] == ['observe']:\n"
+        "    import json\n"
+        "    try:\n"
+        "        payload = json.load(sys.stdin)\n"
+        "    except (TypeError, ValueError):\n"
+        "        sys.exit(0)\n"
+        "    tool = payload.get('tool_name') if isinstance(payload, dict) else None\n"
+        "    if tool in {'Read', 'read_file', 'view_file'}:\n"
+        "        target = (payload.get('tool_input') or {}).get('file_path', '')\n"
+        "        if not str(target).endswith('SKILL.md'):\n"
+        "            sys.exit(0)\n"
+        "    sys.stdin = __import__('io').StringIO(json.dumps(payload))\n"
+        "\n"
+        f"sys.path.insert(0, {str(module_path.parent)!r})\n"
+        "try:\n"
+        f"    from {module_path.stem} import main\n"
+        "except ImportError as error:\n"
+        "    sys.exit(f'si: module missing, re-run the install: {error}')\n"
+        "sys.exit(main())\n"
+    )
 
 
 def run_jury(*, strict: bool = False, refresh_index: bool = False) -> dict:

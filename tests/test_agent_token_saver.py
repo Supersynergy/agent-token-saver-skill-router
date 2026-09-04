@@ -1659,12 +1659,160 @@ class AgentTokenSaverTests(unittest.TestCase):
                 for hook in entry["hooks"]
             ]
             self.assertIn("existing", commands)
+            observer = [c for c in commands if mod.is_observer_command(c)]
+            self.assertEqual(len(observer), 1)
+            # The command pins the real interpreter so the observer never pays a
+            # version-manager shim on every tool call.
             self.assertEqual(
-                commands.count(str(Path(td) / ".local/bin/si") + " observe"), 1
+                observer[0],
+                f"{sys.executable} {Path(td) / '.local/bin/si'} observe",
             )
             hermes_text = hermes.read_text(encoding="utf-8")
             self.assertIn("  post_tool_call:", hermes_text)
             self.assertIn("hooks_auto_accept: false", hermes_text)
+
+    def test_hook_install_upgrades_an_old_observer_entry_in_place(self):
+        """A Bash-only, shim-launched observer is modernised, not duplicated."""
+        with tempfile.TemporaryDirectory() as td:
+            claude = Path(td) / ".claude" / "settings.json"
+            claude.parent.mkdir(parents=True)
+            old_command = str(Path(td) / ".local/bin/si") + " observe"
+            claude.write_text(
+                json.dumps(
+                    {
+                        "hooks": {
+                            "PostToolUse": [
+                                {
+                                    "matcher": "Bash",
+                                    "hooks": [{"type": "command", "command": "keep-me"}],
+                                },
+                                {
+                                    "matcher": "Bash|Shell",
+                                    "hooks": [
+                                        {"type": "command", "command": old_command, "timeout": 3}
+                                    ],
+                                },
+                            ]
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"HOME": td}):
+                first = mod.install_hooks("claude")
+                second = mod.install_hooks("claude")
+
+            self.assertTrue(first[0]["changed"])
+            self.assertFalse(second[0]["changed"])
+            post = json.loads(claude.read_text(encoding="utf-8"))["hooks"]["PostToolUse"]
+            self.assertEqual(len(post), 2, "upgrade must not append a second observer")
+            self.assertEqual(post[0]["hooks"][0]["command"], "keep-me")
+            self.assertEqual(post[0]["matcher"], "Bash", "foreign entry untouched")
+            self.assertEqual(post[1]["matcher"], mod.HOOK_MATCHER)
+            self.assertIn("Read", post[1]["matcher"])
+            self.assertTrue(post[1]["hooks"][0]["command"].startswith(sys.executable))
+
+    def test_observer_counts_a_skill_open_by_file_tool_and_by_shell(self):
+        """The signal that makes `si stats` truthful for Claude Code and Codex."""
+        with tempfile.TemporaryDirectory() as td:
+            env = {
+                "HOME": td,
+                "AGENT_SKILL_ROUTER_STATE_DIR": str(Path(td) / "state"),
+            }
+            by_tool = {
+                "tool_name": "Read",
+                "tool_input": {"file_path": "/home/u/.claude/skills/bug-detective/SKILL.md"},
+                "tool_response": {"success": True},
+            }
+            by_shell = {
+                "tool_name": "Bash",
+                "tool_input": {
+                    "command": "sed -n '1,80p' ~/.codex/skills/code-review-excellence/SKILL.md"
+                },
+                "tool_response": {"exit_code": 0},
+            }
+            not_a_skill = {
+                "tool_name": "Read",
+                "tool_input": {"file_path": "/home/u/project/src/main.py"},
+            }
+            with patch.dict(os.environ, env):
+                first = mod.observe_hook_payload(by_tool)
+                second = mod.observe_hook_payload(by_shell)
+                third = mod.observe_hook_payload(not_a_skill)
+                data = mod.load_usage_data(include_routes=True)
+                raw = mod.route_events_file().read_text(encoding="utf-8")
+
+            self.assertEqual([e["event"] for e in first], ["skill_applied"])
+            self.assertEqual(first[0]["skill"], "bug-detective")
+            self.assertEqual([e["skill"] for e in second if e["event"] == "skill_applied"],
+                             ["code-review-excellence"])
+            self.assertEqual(third, [])
+            self.assertEqual(data.signals["bug-detective"].applied, 1)
+            self.assertEqual(data.signals["code-review-excellence"].applied, 1)
+            # Name only: the path and the command never reach telemetry.
+            self.assertNotIn("/home/u/", raw)
+            self.assertNotIn("sed -n", raw)
+
+    def test_observer_ignores_generic_dirs_and_records_each_skill_once(self):
+        with tempfile.TemporaryDirectory() as td:
+            env = {
+                "HOME": td,
+                "AGENT_SKILL_ROUTER_STATE_DIR": str(Path(td) / "state"),
+            }
+            payload = {
+                "tool_name": "Bash",
+                "tool_input": {
+                    "command": "cat a/skills/audit/SKILL.md; cat a/skills/audit/SKILL.md"
+                },
+            }
+            with patch.dict(os.environ, env):
+                events = mod.observe_hook_payload(payload)
+            self.assertEqual([e["skill"] for e in events], ["audit"])
+
+    def test_installed_launcher_is_a_stub_that_runs_and_keeps_its_marker(self):
+        """The launcher must import the cached module, not carry a copy of it."""
+        with tempfile.TemporaryDirectory() as td:
+            with patch.dict(os.environ, {"HOME": td}):
+                written = mod.install("ggcoder")
+            launcher = Path(td) / ".local" / "bin" / "si"
+            module = Path(td) / ".local" / "lib" / "agent-token-saver-skill-router"
+            self.assertIn(str(module / "agent_token_saver.py"), written)
+            text = launcher.read_text(encoding="utf-8")
+            self.assertLess(len(text), 2000, "launcher must be a stub, not the script")
+            self.assertIn("Adaptive token-saving skill router", text[:512])
+            self.assertTrue(text.startswith(f"#!{sys.executable}\n"))
+
+            env = {**os.environ, "HOME": td, "AGENT_SKILL_ROUTER_STATE_DIR": str(Path(td) / "st")}
+            # Fast path: a non-skill Read exits before the module is imported.
+            fast = subprocess.run(
+                [sys.executable, str(launcher), "observe"],
+                input=json.dumps({"tool_name": "Read", "tool_input": {"file_path": "/a/b.py"}}),
+                capture_output=True, text=True, env=env,
+            )
+            self.assertEqual(fast.returncode, 0)
+            self.assertFalse((module / "__pycache__").exists(), "fast path must not import")
+
+            # Slow path: a SKILL.md read reaches the module and is recorded.
+            slow = subprocess.run(
+                [sys.executable, str(launcher), "observe"],
+                input=json.dumps({
+                    "tool_name": "Read",
+                    "tool_input": {"file_path": "/a/skills/audit/SKILL.md"},
+                }),
+                capture_output=True, text=True, env=env,
+            )
+            self.assertEqual(slow.returncode, 0, slow.stderr)
+            self.assertTrue((module / "__pycache__").exists(), "module import must cache bytecode")
+            events = (Path(td) / "st" / "events.jsonl").read_text(encoding="utf-8")
+            self.assertIn('"skill_applied"', events)
+            self.assertIn('"audit"', events)
+
+            # Any other subcommand goes straight through to the module.
+            stats = subprocess.run(
+                [sys.executable, str(launcher), "stats"], capture_output=True, text=True, env=env,
+            )
+            self.assertEqual(stats.returncode, 0, stats.stderr)
+            self.assertIn('"total_applied"', stats.stdout)
 
     def test_install_dry_run_lists_targets(self):
         with tempfile.TemporaryDirectory() as td:

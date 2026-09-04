@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.8.0 — 2026-09-04
+
+- **The apply loop is closed for Claude Code and Codex.** `si stats` showed a
+  3.5% apply rate — 7,090 routes, 245 applied — and that number measured a
+  telemetry gap, not the agents: `applied` was read only from GG Coder and
+  Hermes sidecar files, and the two hosts producing nearly every route reported
+  nothing. `si observe` now records a `skill_applied` event when a tool call
+  opens a `SKILL.md`, by file tool (`Read`) or by shell (`cat`, `sed -n` in a
+  Bash command). Name only, never the path or the command. `load_usage_data`
+  counts it, so adaptive ranking learns from the hosts that actually use it.
+- **The observer no longer pays a shim on every tool call.** `hook_command()`
+  pins the running interpreter (`sys.executable`, always the real binary), and
+  `si install` writes the module under `~/.local/lib/…` where it earns a
+  `__pycache__`; the `si` and `agent-skill-route` launchers are stubs that
+  import it, with a pre-import fast path for the non-skill Read that is the
+  most frequent hook event. Measured: 200 ms to 10 ms on that path, 40 ms when
+  the module is needed. `install-hooks` upgrades an older observer entry in
+  place — matcher and command — instead of appending a second one, and touches
+  no foreign hook.
+- The PostToolUse matcher now includes `Read|read_file|view_file`.
+
 ## 1.7.1 — 2026-08-18
 
 - Investigated the coordinate-mixing note in `mentioned_skill_names` flagged
