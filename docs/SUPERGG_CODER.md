@@ -1,5 +1,9 @@
 # SuperGG Coder: compact skills and measured output
 
+This page covers the `sgg` CLI launcher. The desktop `.app` starts its own
+bundled Node sidecar and does not run that launcher. See
+[GG and SuperGG desktop](GG_DESKTOP.md) for the native app observer and tests.
+
 SuperGG's `sgg` launcher can keep a large skill catalog out of the model request.
 The existing native `skill` tool gains a local search convention:
 

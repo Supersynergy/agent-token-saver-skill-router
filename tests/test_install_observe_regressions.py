@@ -46,6 +46,23 @@ class InstallObserveRegressions(unittest.TestCase):
                 events = mod.observe_hook_payload({"tool_name": "skill", "tool_input": {"skill": "audit"}, "source": "superggcoder"})
                 self.assertEqual(events[0]["source"], "superggcoder")
 
+    def test_desktop_hook_sources_survive_skill_and_tool_projection(self):
+        with tempfile.TemporaryDirectory() as td:
+            with patch.dict(os.environ, {"AGENT_SKILL_ROUTER_STATE_DIR": td}):
+                for source in ("ggcoder-app", "superggcoder-app"):
+                    with self.subTest(source=source):
+                        events = mod.observe_hook_payload({
+                            "tool_name": "skill", "tool_input": {"skill": "audit"},
+                            "source": source, "tool_response": {"status": "success"},
+                        })
+                        self.assertEqual(events[0]["source"], source)
+                        events = mod.observe_hook_payload({
+                            "tool_name": "bash", "tool_input": {"command": "just check"},
+                            "source": source, "tool_response": {"status": "error"},
+                        })
+                        self.assertEqual(events[0]["source"], source)
+                        self.assertEqual(events[0]["outcome"], "failure")
+
     def test_bootstrap_finds_versioned_python_and_rejects_unsupported_python(self):
         with tempfile.TemporaryDirectory() as td:
             home = Path(td)

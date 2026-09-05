@@ -3,6 +3,14 @@ import { spawnSync } from "node:child_process";
 const MAX_PENDING = 256;
 const MAX_INPUT_CHARS = 32768;
 
+export function observerSource({ env = process.env, argv = process.argv } = {}) {
+  const entry = (argv[1] ?? "").replaceAll("\\", "/");
+  const desktop = /(?:^|\/)app-sidecar\.mjs$/.test(entry);
+  const supergg = env.AGENT_SKILL_ROUTER_HOST === "superggcoder" ||
+    /\/SuperGG\s?coder\.app\//i.test(entry);
+  return `${supergg ? "superggcoder" : "ggcoder"}${desktop ? "-app" : ""}`;
+}
+
 function projectCall(event) {
   if (!event || typeof event.toolCallId !== "string") return null;
   const args = event.args;
@@ -55,7 +63,7 @@ export default function createObserver({ python, launcher, run = spawnSync }) {
           const failed = event.isError === true || /^Error:/.test(result) || (exit && exit[1].trim() !== "0");
           const payload = {
             ...item.call,
-            source: process.env.AGENT_SKILL_ROUTER_HOST === "superggcoder" ? "superggcoder" : "ggcoder",
+            source: observerSource(),
             tool_response: { status: failed ? "error" : "success" },
             duration_ms: Math.round(performance.now() - item.started),
           };

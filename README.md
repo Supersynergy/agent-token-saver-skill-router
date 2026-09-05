@@ -292,7 +292,8 @@ events. `install --target ggcoder` installs the observer even on a fresh HOME.
 It records successful native `skill` calls, skill-file reads and shell-tool
 outcomes. Failed skill loads do not count. Ordinary file reads launch nothing.
 The observer adds no model context, leaves tool results intact, and bounds each
-local delivery to one second. Start a new GG session after installation.
+local delivery to one second. Start a new CLI process after installation;
+restart the desktop app after updating an already loaded extension.
 This is observation; it does not install Codex/Claude prompt or Stop hooks in GG.
 
 The actual GG 5.46.2 session, extension loader and Bash/skill tools were exercised
@@ -301,6 +302,12 @@ using a local deterministic provider. Reproduce without a paid model call:
 ```bash
 node scripts/ggcoder_runtime_smoke.mjs /path/to/installed/ggcoder /path/to/router /path/to/agent-token-saver
 ```
+
+The packaged SuperGG desktop sidecar and GG Coder 0.59.1 were also exercised
+through their native HTTP/SSE API with the embedded Node runtime. Desktop events
+carry `superggcoder-app` or `ggcoder-app`; CLI events retain `superggcoder` or
+`ggcoder`. See [desktop installation and verification](docs/GG_DESKTOP.md).
+The compact-catalog helper in the `sgg` launcher applies to the CLI only.
 
 Exact
 tool mentions always win; semantic selection requires a confidence floor and

@@ -2741,7 +2741,7 @@ def record_tool_usage(
         "outcome": outcome,
         "latency_ms": latency_ms,
     }
-    if source in ("ggcoder", "superggcoder"):
+    if source in ("ggcoder", "superggcoder", "ggcoder-app", "superggcoder-app"):
         event["source"] = source
     if telemetry_enabled():
         append_jsonl(route_events_file(), event)
@@ -2930,7 +2930,7 @@ def record_skill_applied(skill_name: str, *, source: str | None = None) -> dict[
         "event": "skill_applied",
         "skill": name,
     }
-    if source in ("ggcoder", "superggcoder"):
+    if source in ("ggcoder", "superggcoder", "ggcoder-app", "superggcoder-app"):
         event["source"] = source
     if telemetry_enabled():
         append_jsonl(route_events_file(), event)
@@ -2940,7 +2940,9 @@ def record_skill_applied(skill_name: str, *, source: str | None = None) -> dict[
 def observe_hook_payload(payload: dict[str, object]) -> list[dict[str, object]]:
     outcome = _hook_outcome(payload)
     latency_ms = _hook_latency_ms(payload)
-    source = payload.get("source") if payload.get("source") in ("ggcoder", "superggcoder") else None
+    source = payload.get("source") if payload.get("source") in (
+        "ggcoder", "superggcoder", "ggcoder-app", "superggcoder-app"
+    ) else None
     events = [
         record_tool_usage(name, outcome, latency_ms, source=source)
         for name in observed_tool_names(_hook_command(payload))

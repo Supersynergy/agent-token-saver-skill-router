@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import createObserver from "../scripts/ggcoder_observer.mjs";
+import createObserver, { observerSource } from "../scripts/ggcoder_observer.mjs";
 
 function fixture(run) {
   const bus = new EventEmitter();
@@ -59,6 +59,17 @@ test("SuperGG host is reported explicitly without counting routing as a loaded s
     if (previous === undefined) delete process.env.AGENT_SKILL_ROUTER_HOST;
     else process.env.AGENT_SKILL_ROUTER_HOST = previous;
   }
+});
+
+test("desktop identity comes from the sidecar entry even without launcher environment", () => {
+  const source = (entry, env = {}) => observerSource({ env, argv: ["ggnode", entry] });
+  assert.equal(source("/Applications/SuperGGcoder.app/Contents/Resources/sidecar/app-sidecar.mjs"), "superggcoder-app");
+  assert.equal(source("/Applications/GG Coder.app/Contents/Resources/sidecar/app-sidecar.mjs"), "ggcoder-app");
+  assert.equal(source("C:\\GG Coder\\sidecar\\app-sidecar.mjs"), "ggcoder-app");
+  assert.equal(source("/custom/app-sidecar.mjs", { AGENT_SKILL_ROUTER_HOST: "superggcoder" }), "superggcoder-app");
+  assert.equal(source("/runtime/dist/index.js"), "ggcoder");
+  assert.equal(source("/runtime/dist/index.js", { AGENT_SKILL_ROUTER_HOST: "superggcoder" }), "superggcoder");
+  assert.equal(observerSource({ env: {}, argv: [] }), "ggcoder");
 });
 
 test("activation is idempotent, deactivation unsubscribes, broken observer stays fail-open", () => {
