@@ -1,6 +1,6 @@
 # Save Your Skill Tokens
 
-![A compass routes a task to a focused set of skills](docs/assets/cover.png)
+![Skill Router](docs/assets/cover.png)
 
 [🚀 Install](#instant-install-60-seconds) · [🧠 Routing](#what-it-does) · [📊 Evidence](#measured-impact) · [❓ FAQ](#faq) · [License](#license)
 
