@@ -67,11 +67,20 @@ curl -fsSL https://raw.githubusercontent.com/Supersynergy/agent-token-saver-skil
 
 ### Requirements
 
-| | |
-|---|---|
-| **Required** | Python **3.9+**, so macOS's built-in `/usr/bin/python3` is enough. `git` too, but only for the piped `curl \| bash` install above. |
-| **OS** | Linux and macOS. CI runs the full test suite on every Python from **3.9 to 3.14** (latest stable) on Linux, plus the floor and latest on macOS, on every push. On Windows use WSL2; the installer is POSIX shell. |
-| **Dependencies** | None. Standard library only — no package manager, no build step, no daemon. |
+<details>
+<summary><strong>📋 Show 3 entries</strong></summary>
+
+- **Required**<br>
+  —: Python **3.9+**, so macOS's built-in `/usr/bin/python3` is enough. `git` too, but only for the piped `curl \| bash` install above.
+
+- **OS**<br>
+  —: Linux and macOS. CI runs the full test suite on every Python from **3.9 to 3.14** (latest stable) on Linux, plus the floor and latest on macOS, on every push. On Windows use WSL2; the installer is POSIX shell.
+
+- **Dependencies**<br>
+  —: None. Standard library only — no package manager, no build step, no daemon.
+
+</details>
+
 
 Uninstall = delete the skill folder.
 
@@ -99,11 +108,26 @@ Humanlove principle: users do not love more features. They love software that re
 
 Measured on Maxim's Hermes profile, 2026-07-09:
 
-| Mode | Chars | Est. tokens (`chars/4`) | Lines |
-|---|---:|---:|---:|
-| Full Hermes skills prompt | 55,216 | 13,804 | 936 |
-| Router-only block | 392 | 98 | 7 |
-| Saved | 54,824 | 13,706 | 929 |
+<details>
+<summary><strong>📋 Show 3 entries</strong></summary>
+
+- **Full Hermes skills prompt**<br>
+  Chars: 55,216<br>
+  Est. tokens (`chars/4`): 13,804<br>
+  Lines: 936
+
+- **Router-only block**<br>
+  Chars: 392<br>
+  Est. tokens (`chars/4`): 98<br>
+  Lines: 7
+
+- **Saved**<br>
+  Chars: 54,824<br>
+  Est. tokens (`chars/4`): 13,706<br>
+  Lines: 929
+
+</details>
+
 
 **Reduction: 99.29% of the Hermes skills prompt.**
 
@@ -111,11 +135,23 @@ Measured on Maxim's Hermes profile, 2026-07-09:
 
 Measured with 453 active skill names (2026-07-15):
 
-| Mode | Chars | Est. tokens (`chars/4`) |
-|---|---:|---:|
-| Full skill catalog | 143,955 | 35,988 |
-| Router result | 237 | 59 |
-| Saved | 143,718 | 35,929 |
+<details>
+<summary><strong>📋 Show 3 entries</strong></summary>
+
+- **Full skill catalog**<br>
+  Chars: 143,955<br>
+  Est. tokens (`chars/4`): 35,988
+
+- **Router result**<br>
+  Chars: 237<br>
+  Est. tokens (`chars/4`): 59
+
+- **Saved**<br>
+  Chars: 143,718<br>
+  Est. tokens (`chars/4`): 35,929
+
+</details>
+
 
 **Reduction: 99.84% of the routed skill context.** Warm index routing averaged
 66.5 ms over 20 runs; forced rebuild averaged 134.5 ms over 10 runs. `si drift`
@@ -506,13 +542,26 @@ the guarantees, severities, and safe-fix boundary.
 
 These are the kind of selections the router produces from a large local skill library:
 
-| Intent | Expected selected skill type |
-|---|---|
-| `make this README lovable and high-converting` | `humanlove`, copy/product UX skills |
-| `debug failing pytest in Hermes prompt builder` | Hermes + verification skills |
-| `prepare GitHub release with changelog and tag` | release workflow skills |
-| `audit desktop markdown rendering bug` | frontend/testing/debugging skills |
-| `route a task with too many possible skills` | metaskill/router skills |
+<details>
+<summary><strong>📋 Show 5 entries</strong></summary>
+
+- **`make this README lovable and high-converting`**<br>
+  Expected selected skill type: `humanlove`, copy/product UX skills
+
+- **`debug failing pytest in Hermes prompt builder`**<br>
+  Expected selected skill type: Hermes + verification skills
+
+- **`prepare GitHub release with changelog and tag`**<br>
+  Expected selected skill type: release workflow skills
+
+- **`audit desktop markdown rendering bug`**<br>
+  Expected selected skill type: frontend/testing/debugging skills
+
+- **`route a task with too many possible skills`**<br>
+  Expected selected skill type: metaskill/router skills
+
+</details>
+
 
 The goal is not to always pick the same skill. The goal is to stop paying for every skill when only a few are useful.
 
