@@ -1,6 +1,9 @@
+<p align="center">
+  <img src="docs/assets/cover.png" alt="Skill Router" width="960">
+</p>
+
 # Save Your Skill Tokens
 
-![Skill Router](docs/assets/cover.png)
 
 [🚀 Install](#instant-install-60-seconds) · [🧠 Routing](#what-it-does) · [📊 Evidence](#measured-impact) · [❓ FAQ](#faq) · [License](#license)
 
